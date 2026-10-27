@@ -78,6 +78,7 @@ class PluginApiTests(unittest.TestCase):
         args = json.loads(record.read_text())
         self.assertEqual(args[0], "--reuse-window")
         workspace = Path(args[1])
+        self.assertEqual(workspace.name, "Task-1234.code-workspace")
         self.assertEqual(response.json()["opened"], [str(workspace)])
         self.assertTrue(workspace.is_relative_to(self.home / "cache" / "dev-board" / "workspaces"))
         self.assertEqual(json.loads(workspace.read_text())["folders"], [
@@ -86,6 +87,25 @@ class PluginApiTests(unittest.TestCase):
         with patch.object(api, "_task_worktrees", return_value=[(first, "1234", "-1234")]):
             self.assertEqual(self.client.post("/open_editor?task=1234").status_code, 200)
         self.assertEqual(len(json.loads(workspace.read_text())["folders"]), 1)
+
+    def test_editor_display_preserves_supported_app_names_and_invalid_config(self):
+        for editor, expected in [("Visual Studio Code", "VS Code"),
+                                 ("/Applications/Visual Studio Code.app", "VS Code"),
+                                 ("cursor --reuse-window", "cursor"), ("'invalid", "配置的编辑器")]:
+            with self.subTest(editor=editor), patch.dict(os.environ, {"DEV_BOARD_EDITOR": editor}):
+                self.assertEqual(self.client.get("/board").json()["editor_name"], expected)
+
+    def test_workspace_filename_escapes_task_and_default_editor_metadata(self):
+        repo = self.repo("service-1234")
+        os.environ.pop("DEV_BOARD_EDITOR", None)
+        self.assertEqual(self.client.get("/board").json()["editor_name"], "VS Code")
+        with patch.object(api, "_task_worktrees", return_value=[(repo, "../1234", "-1234")]), \
+                patch.object(api.subprocess, "run"):
+            response = self.client.post("/open_editor", params={"task": "../1234"})
+        self.assertEqual(response.status_code, 200)
+        workspace = Path(response.json()["opened"][0])
+        self.assertEqual(workspace.name, "Task-..%2F1234.code-workspace")
+        self.assertEqual(workspace.parent, self.home / "cache/dev-board/workspaces")
 
     def test_real_editor_process_failure_is_http_error(self):
         self.repo("service-1234")

@@ -44,7 +44,7 @@ async function openReview(url) {
   }
 }
 
-function ReviewLinks({ repo }) {
+function ReviewLinks({ repo, showRepo = true }) {
   const query = useReviews(repo.dir, repo.branch)
   const [adding, setAdding] = useState(false)
   const [url, setUrl] = useState('')
@@ -53,8 +53,9 @@ function ReviewLinks({ repo }) {
   const data = query.data
   const reviews = data?.reviews || []
   const manual = data?.manual || []
-  const status = { ok: '已加载', empty: '无关联审阅', unsupported: '不支持自动查询（可手工添加）',
-    unavailable: 'CLI 不可用', error: '查询失败', timeout: '查询超时', partial: '结果不完整' }
+  const status = { ok: '已加载', empty: '无关联审阅', unsupported: '未配置自动查询（可手工添加）',
+    unavailable: '网关未安装审阅 CLI', error: '查询失败', timeout: '查询超时', partial: '结果不完整' }
+  const message = data?.message?.replace(/^(gh|glab) query failed; check CLI login, permissions, host configuration and response format$/, '请检查网关 CLI 登录、权限、主机配置及响应格式')
   const update = async (action, link) => {
     setSaving(true); setError('')
     try {
@@ -67,20 +68,19 @@ function ReviewLinks({ repo }) {
     } catch (failure) { setError(failure.message || String(failure)) }
     finally { setSaving(false) }
   }
-  return jsxs('div', { className: 'w-full text-xs px-2 py-1 border-b border-(--ui-stroke-secondary) min-w-0',
+  return jsxs('div', { className: 'w-full text-xs px-2 py-1 border-t border-(--ui-stroke-secondary) min-w-0',
     onClick: (event) => event.stopPropagation(), children: [
       jsxs('div', { className: 'flex items-center gap-1 flex-wrap', children: [
-        jsx('span', { children: '代码审阅 · ' + repo.repo + ' · ' + (query.isLoading ? '加载中…' : query.isError ? '请求失败' :
+        jsx('span', { children: '代码审阅 · ' + (showRepo ? repo.repo + ' · ' : '') + (query.isLoading ? '加载中…' : query.isError ? '请求失败' :
           (reviews.length + manual.length) + ' · ' + (status[data?.status] || '等待加载')) }),
         jsx(Button, { variant: 'ghost', size: 'sm', disabled: query.isFetching, onClick: query.refresh, children: '刷新审阅' }),
         jsx(Button, { variant: 'ghost', size: 'sm', onClick: () => setAdding(!adding), children: '添加链接' })
       ]}),
       query.isError ? jsx('div', { role: 'alert', children: query.error?.message || '审阅请求失败' }) : null,
-      data?.message ? jsx('div', { children: data.message }) : null,
-      data?.branch ? jsx('div', { className: 'break-all text-(--ui-text-tertiary)', children: data.repository + ' · ' + data.branch }) : null,
+      data?.message && !['ok', 'empty', 'unsupported', 'unavailable', 'timeout', 'partial'].includes(data.status) ? jsx('div', { children: message }) : null,
       ...reviews.map((r) => jsx('button', { type: 'button', className: 'block text-left break-words hover:underline',
         onClick: () => openReview(r.url), children: (r.provider === 'gitlab' ? 'MR !' : 'PR #') + r.number + ' ' + r.title +
-          ' → ' + r.target_branch + ' · ' + r.state + (r.draft ? ' · Draft' : '') }, r.provider + ':' + r.number)),
+          ' → ' + r.target_branch + ' · ' + ({ merged: '已合并', open: '待合并', opened: '待合并', closed: '已关闭' }[r.state] || r.state) + (r.draft ? ' · 草稿' : '') }, r.provider + ':' + r.number)),
       ...manual.map((link) => jsxs('div', { className: 'flex gap-1 items-center', children: [
         jsx('button', { type: 'button', className: 'break-all text-left hover:underline', onClick: () => openReview(link), children: '手工 · ' + link }),
         jsx(Button, { variant: 'ghost', size: 'sm', disabled: saving, onClick: () => update('remove', link), children: '移除' })
@@ -145,13 +145,13 @@ async function openDock(map) {
   }
 }
 
-async function openEditor(task) {
+async function openEditor(task, editorName = 'VS Code') {
   try {
     const result = await rest('/open_editor?task=' + encodeURIComponent(task), { method: 'POST', timeoutMs: 20000 })
-    if (!result.ok) throw new Error(result.detail || '编辑器命令未成功完成')
-    host.notify({ kind: 'success', message: '编辑器打开命令已完成' })
+    if (!result.ok) throw new Error(result.detail || editorName + ' 打开命令未成功完成')
+    host.notify({ kind: 'success', message: (result.editor_name || editorName) + ' 打开命令已完成' })
   } catch (error) {
-    host.notify({ kind: 'error', message: '打开编辑器失败：' + (error.message || String(error)) })
+    host.notify({ kind: 'error', message: '打开 ' + editorName + ' 失败：' + (error.message || String(error)) })
   }
 }
 
@@ -456,23 +456,25 @@ function SessionChip({ s }) {
   })
 }
 
-function TaskCard({ task, activeZt, onPickRepo, pickedDir }) {
+function TaskCard({ task, activeZt, onPickRepo, pickedDir, editorName = 'VS Code' }) {
   const sessions = useSessions()
   const chips = (sessions.data?.zt_sessions || {})[task.id] || []
+  const profile = host.state.focusedSessionProfile?.get() || host.state.profile?.get() || 'default'
+  const title = (chips.find((s) => s.profile === profile) || chips[0])?.title || taskPrefix(task.id, sessions.data?.zt_sessions)
   const isActive = activeZt === task.id
   return jsxs('div', {
     className: cn('rounded-lg border bg-transparent', isActive ? 'border-(--accent)' : 'border-(--ui-stroke-secondary)'),
     children: [
       jsxs('div', { className: 'flex items-center gap-2 px-3 py-2 border-b border-(--ui-stroke-secondary) flex-wrap', children: [
-        jsx('span', { className: 'font-semibold', children: taskPrefix(task.id, sessions.data?.zt_sessions) }),
+        jsx('span', { className: 'font-semibold break-words min-w-0', children: title }),
         jsx(Badge, { variant: 'secondary', children: task.repos.length + ' 仓' }),
         isActive ? jsx(Badge, { variant: 'success', children: '当前会话' }) : null,
         chips.length ? jsx('div', { className: 'flex gap-1 flex-wrap', children: chips.map((s) => jsx(SessionChip, { s }, (s.profile || 'default') + ':' + s.id)) }) : null,
         jsxs('div', { className: 'ml-auto flex gap-1', children: [
           jsx(Button, {
             variant: 'ghost', size: 'sm',
-            onClick: () => openEditor(task.id),
-            children: '编辑器'
+            onClick: () => openEditor(task.id, editorName),
+            children: '在 ' + editorName + ' 打开'
           })
         ]})
       ]}),
@@ -483,9 +485,9 @@ function TaskCard({ task, activeZt, onPickRepo, pickedDir }) {
           jsx(StatusDot, { tone: r.dirty > 0 ? 'warn' : 'good' }),
           jsx('span', { className: 'font-medium min-w-[7rem]', children: r.repo }),
           jsx('span', { className: 'text-(--ui-text-tertiary) truncate max-w-[10rem]', children: r.branch || '(detached)' }),
-          jsx('span', { className: 'ml-auto text-(--ui-text-tertiary) tabular-nums text-xs whitespace-nowrap', children: r.last || '—' }),
+          jsx('span', { className: 'ml-auto text-(--ui-text-tertiary) tabular-nums text-xs break-words min-w-0', children: r.last || '—' }),
           r.dirty > 0 ? jsx(Badge, { variant: 'warning', children: r.dirty + ' 未提交' }) : null,
-          jsx(ReviewLinks, { repo: r })
+          jsx(ReviewLinks, { repo: r, showRepo: false })
         ]
       }, r.dir)) })
     ]
@@ -512,7 +514,7 @@ function BoardPage() {
         }),
         jsx(Button, { variant: 'ghost', size: 'sm', onClick: () => board.refetch(), children: '刷新' })
       ]}),
-      sorted.map((t) => jsx(TaskCard, { task: t, activeZt, pickedDir, onPickRepo: (r) => setPickedDir(r.dir) }, t.id))
+      sorted.map((t) => jsx(TaskCard, { task: t, activeZt, pickedDir, editorName: board.data?.editor_name || 'VS Code', onPickRepo: (r) => setPickedDir(r.dir) }, t.id))
     ]})
   ]})
 }

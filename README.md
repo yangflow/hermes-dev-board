@@ -20,8 +20,8 @@ side-by-side diffs of the task you are currently talking about.
   - a collapsible **directory tree** with per-file `+added / −removed` counts (compact single-child
     chains, VS Code style);
   - a **side-by-side file diff** (old / new columns, own line numbers, add/del/mod row alignment);
-  - one-click **open in editor**: every worktree of the task in one multi-root window
-    (VS Code by default, configurable).
+  - one-click **open in VS Code**: every worktree of the task in one multi-root window
+    (configurable launch command; requires VS Code workspace support).
 - **Code review links** in every board repo row and the chat panel (All / per-repo): PRs/MRs, drafts, states, target branches, manual links and refresh.
 - 15 s auto-refresh; untracked files get a synthesized `new file` diff.
 
@@ -68,6 +68,15 @@ Requires the Hermes desktop app with plugin support.
 
 Any ticket prefix works — ZT, GH, JIRA, plain numbers — as long as the title regex matches it.
 Nothing is ZT-specific; the prefix shown in the UI is taken from the matched session label.
+
+
+Opening creates a VS Code `.code-workspace` file such as `Task-9246.code-workspace` in
+`$HERMES_HOME/cache/dev-board/workspaces`, containing exactly the task's discovered folders.
+These local files contain absolute paths and should not be committed. `DEV_BOARD_EDITOR` changes
+only the launch command (shell-style quoting, no shell expansion); the workspace format remains
+VS Code's. Use a launcher that accepts this format, such as `code` or `cursor`, not an arbitrary
+editor. On macOS app names / `.app` paths use `open -a`; command arguments are otherwise preserved.
+The button names the configured launcher; success means the launch command completed.
 
 ## Code review links
 

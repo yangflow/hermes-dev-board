@@ -14,7 +14,6 @@ All knobs are environment variables (set them on the gateway process):
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -320,6 +319,21 @@ def _session_dbs() -> list[Path]:
     return [db for db in dbs if db.exists()]
 
 
+def _editor_name() -> str:
+    editor = os.environ.get("DEV_BOARD_EDITOR")
+    if not editor or editor == "Visual Studio Code":
+        return "VS Code"
+    if editor.endswith(".app"):
+        name = Path(editor).stem
+        return "VS Code" if name == "Visual Studio Code" else name
+    try:
+        command = shlex.split(editor)
+    except ValueError:
+        return "配置的编辑器"
+    name = Path(command[0]).name.removesuffix(".app") if command else "配置的编辑器"
+    return "VS Code" if name in ("code", "Visual Studio Code") else name
+
+
 @router.get("/board")
 def board() -> dict:
     tasks: dict[str, list] = {}
@@ -334,7 +348,7 @@ def board() -> dict:
                 "last": _run(["git", "log", "-1", "--format=%h %s"], d),
             }
         )
-    return {"tasks": [{"id": k, "repos": v} for k, v in sorted(tasks.items(), reverse=True)]}
+    return {"tasks": [{"id": k, "repos": v} for k, v in sorted(tasks.items(), reverse=True)], "editor_name": _editor_name()}
 
 
 def _model_config(raw) -> dict:
@@ -476,7 +490,7 @@ def open_editor(task: str = Query(...)) -> dict:
         home = Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))).expanduser()
         cache = home / "cache" / "dev-board" / "workspaces"
         cache.mkdir(parents=True, exist_ok=True)
-        workspace = cache / (hashlib.sha256(task.encode()).hexdigest() + ".code-workspace")
+        workspace = cache / ("Task-" + quote(task, safe="") + ".code-workspace")
         workspace.write_text(json.dumps({"folders": [{"name": d.name, "path": str(d.resolve())} for d in dirs]}, indent=2) + "\n")
         targets = [str(workspace)]
         editor = os.environ.get("DEV_BOARD_EDITOR") or ("Visual Studio Code" if sys.platform == "darwin" else "code")
@@ -486,7 +500,7 @@ def open_editor(task: str = Query(...)) -> dict:
             cmd = ["open", "-a", cmd[0] if len(cmd) == 1 else editor]
         cmd += targets
         subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=15)
-        return {"ok": True, "opened": targets}
+        return {"ok": True, "opened": targets, "editor_name": _editor_name()}
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="editor command timed out after 15 seconds")
     except subprocess.CalledProcessError as exc:

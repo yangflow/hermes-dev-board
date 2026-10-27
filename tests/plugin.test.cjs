@@ -149,7 +149,7 @@ test('identical database ids in different profiles resolve to the owning task', 
 
 test('task labels contain their own full id and never inherit another task prefix', () => {
   const h = harness()
-  h.results['dev-board-sessions'].data.zt_sessions['5678'] = [{ ...h.session, id: 'other', label: 'GH-5678' }]
+  h.results['dev-board-sessions'].data.zt_sessions['5678'] = [{ ...h.session, id: 'other', title: 'GH-5678 other task', label: 'GH-5678' }]
   const card = (id) => h.render(h.api.TaskCard, { task: { id, repos: [] } })
   assert.match(text(card('1234')), /ZT-1234/)
   assert.match(text(card('5678')), /GH-5678/)
@@ -160,14 +160,15 @@ test('task labels contain their own full id and never inherit another task prefi
 test('editor callback forwards POST options and displays successful completion', async () => {
   const h = harness()
   const card = h.render(h.api.TaskCard, { task: { id: '1234', repos: [] } })
-  await button(card, '编辑器')()
+  await button(card, '在 VS Code 打开')()
   assert.deepEqual(plain(h.calls[0]), ['rest', '/open_editor?task=1234', { method: 'POST', timeoutMs: 20000 }])
   assert.equal(h.notices[0].kind, 'success')
+  assert.match(h.notices[0].message, /VS Code 打开命令已完成/)
 })
 
 test('editor callback catches request rejection and false success responses', async () => {
   const h = harness()
-  const click = button(h.render(h.api.TaskCard, { task: { id: '1234', repos: [] } }), '编辑器')
+  const click = button(h.render(h.api.TaskCard, { task: { id: '1234', repos: [] } }), '在 VS Code 打开')
   h.rest = async () => { throw new Error('HTTP 504: editor timed out') }
   await click()
   assert.equal(h.notices.at(-1).kind, 'error')
@@ -309,8 +310,8 @@ test('review links show count, number, title, target, state and draft; use ctx.o
   h.results['dev-board-reviews'] = { data: reviewData }
   const panel = h.render(h.api.ReviewLinks, { repo: reviewRepo })
   assert.match(text(panel), /代码审阅 · api · 3 · 已加载/)
-  assert.match(text(panel), /PR #7 Fix request → main · merged · Draft/)
-  assert.match(text(panel), /MR !8 Next request → release · closed/)
+  assert.match(text(panel), /PR #7 Fix request → main · 已合并 · 草稿/)
+  assert.match(text(panel), /MR !8 Next request → release · 已关闭/)
   await nodes(panel).find((n) => n.type === 'button' && text(n).startsWith('PR #7')).props.onClick()
   await nodes(panel).find((n) => n.type === 'button' && text(n).startsWith('手工')).props.onClick()
   assert.deepEqual(plain(h.calls), [['external', reviewData.reviews[0].url], ['external', reviewData.manual[0]]])
@@ -343,11 +344,11 @@ test('review loading, HTTP error, empty, unsupported, unavailable, timeout and p
     [{ isLoading: true }, /加载中/],
     [{ isError: true, error: new Error('HTTP 409 detached') }, /请求失败.*HTTP 409 detached/],
     [{ data: { status: 'empty' } }, /0 · 无关联审阅/],
-    [{ data: { status: 'unsupported' } }, /不支持自动查询/],
-    [{ data: { status: 'unavailable' } }, /CLI 不可用/],
+    [{ data: { status: 'unsupported' } }, /未配置自动查询/],
+    [{ data: { status: 'unavailable' } }, /网关未安装审阅 CLI/],
     [{ data: { status: 'timeout' } }, /查询超时/],
     [{ data: { status: 'error', message: 'login failed' } }, /查询失败.*login failed/],
-    [{ data: { ...reviewData, status: 'partial', message: 'incomplete' } }, /结果不完整.*incomplete/]
+    [{ data: { ...reviewData, status: 'partial', message: 'incomplete' } }, /结果不完整/]
   ]
   for (const [result, expected] of cases) {
     const h = harness()
@@ -411,4 +412,16 @@ test('board repo rows and dock all/per-repo selection include code reviews witho
   panel = dock.render(dock.api.DockPanel)
   assert.ok(nodes(panel).some((n) => typeof n.type === 'function' && n.type.name === 'FileCompare'))
   assert.equal(nodes(panel).find((n) => n.type === 'Select').props.value, 'auto')
+})
+
+test('task title, configured launcher and compact review identity', async () => {
+  const h = harness()
+  const card = h.render(h.api.TaskCard, { task: { id: '1234', repos: [reviewRepo] }, editorName: 'Cursor' })
+  assert.match(text(card), /ZT-1234 task/)
+  await button(card, '在 Cursor 打开')()
+  assert.match(h.notices.at(-1).message, /Cursor/)
+  h.results['dev-board-reviews'] = { data: { ...reviewData, status: 'unsupported', message: 'host is not configured; manual links only' } }
+  const panel = h.render(h.api.ReviewLinks, { repo: reviewRepo, showRepo: false })
+  assert.doesNotMatch(text(panel), /github.com|feat\/exact|host is not configured|代码审阅 · api/)
+  assert.match(text(panel), /未配置自动查询/)
 })
