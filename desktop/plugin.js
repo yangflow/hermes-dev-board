@@ -27,8 +27,6 @@ const boardStyles = `
 .dev-board .db-card { border:1px solid var(--ui-stroke-secondary); border-radius:8px; overflow:hidden; }
 .dev-board .db-card-head { padding:12px 14px; }
 .dev-board .db-card-head > * { min-width:0; max-width:100%; }
-.dev-board .db-session-chips { display:flex; flex-wrap:wrap; gap:4px; min-width:0; max-width:100%; }
-.dev-board .db-session-chips > button { min-width:0; max-width:min(14rem, 100%); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .dev-board .db-repos { display:flex; flex-direction:column; gap:10px; padding:12px; }
 .dev-board .db-repo { min-width:0; padding:10px; border:1px solid var(--ui-stroke-secondary); border-radius:5px; }
 .dev-board .db-repo-head { display:flex; align-items:center; gap:6px; width:100%; min-width:0; border:0; background:transparent; color:inherit; text-align:left; padding:0 0 6px; }
@@ -55,6 +53,9 @@ const boardStyles = `
 `
 const boardStyle = () => jsx('style', { children: boardStyles })
 
+const API_VERSION = 2
+const staleBackend = (data) => data && data.api_version !== API_VERSION
+const staleNotice = () => jsx(EmptyState, { title: '后端版本不匹配', description: '磁盘插件与运行中的网关 API 版本不一致。请重启加载 Dev Board 的网关，再等待自动刷新或重新加载页面；仅刷新页面不会重载后端路由。' })
 const REFRESH_MS = 15000
 let boardFetch = null
 let openExternal = null
@@ -95,9 +96,11 @@ function ReviewLinks({ repo, showRepo = true, compact = false }) {
   const data = query.data
   const reviews = data?.reviews || []
   const manual = data?.manual || []
-  const status = { ok: '已加载', empty: '无关联审阅', unsupported: '未配置自动查询（可手工添加）',
+  const status = { ok: '已加载', empty: '无关联审阅', unsupported: '未配置自动查询（可手工添加）', detached: 'Detached HEAD：无法推断来源分支', unsupported_source: '无法确定审阅来源',
     unavailable: '网关未安装审阅 CLI', error: '查询失败', timeout: '查询超时', partial: '结果不完整' }
-  const message = data?.message?.replace(/^(gh|glab) query failed; check CLI login, permissions, host configuration and response format$/, '请检查网关 CLI 登录、权限、主机配置及响应格式')
+  const needsBranch = ['detached', 'unsupported_source'].includes(data?.status)
+  const message = data?.status === 'detached' ? '当前无法确定来源分支，自动查询及手工关联均需先切换到明确的分支。'
+    : data?.status === 'unsupported_source' ? '当前仓库 remote 格式不受支持，请配置有效的仓库 remote 后再查询或手工关联。' : data?.message?.replace(/^(gh|glab) query failed; check CLI login, permissions, host configuration and response format$/, '请检查网关 CLI 登录、权限、主机配置及响应格式')
   const update = async (action, link) => {
     setSaving(true); setError('')
     try {
@@ -117,7 +120,7 @@ function ReviewLinks({ repo, showRepo = true, compact = false }) {
         jsx('span', { children: (compact ? '' : '代码审阅 · ') + (showRepo ? repo.repo + ' · ' : '') + (query.isLoading ? '加载中…' : query.isError ? '请求失败' :
           (reviews.length + manual.length) + ' · ' + (status[data?.status] || '等待加载')) }),
         jsx(Button, { variant: 'ghost', size: 'sm', disabled: query.isFetching, onClick: query.refresh, children: '刷新审阅' }),
-        jsx(Button, { variant: 'ghost', size: 'sm', onClick: () => setAdding(!adding), children: '添加链接' })
+        jsx(Button, { variant: 'ghost', size: 'sm', disabled: needsBranch, onClick: () => setAdding(!adding), children: '添加链接' })
       ]}),
       query.isError ? jsx('div', { role: 'alert', children: query.error?.message || '审阅请求失败' }) : null,
       data?.message && !['ok', 'empty', 'unsupported', 'unavailable', 'timeout', 'partial'].includes(data.status) ? jsx('div', { children: message }) : null,
@@ -128,7 +131,7 @@ function ReviewLinks({ repo, showRepo = true, compact = false }) {
         jsx('button', { type: 'button', className: 'db-review-link', onClick: () => openReview(link), children: '手工 · ' + link }),
         jsx(Button, { variant: 'ghost', size: 'sm', disabled: saving, onClick: () => update('remove', link), children: '移除' })
       ] }, link)),
-      adding ? jsxs('form', { className: 'flex gap-1', onSubmit: (event) => { event.preventDefault(); if (!saving) return update('add', url) }, children: [
+      adding && !needsBranch ? jsxs('form', { className: 'flex gap-1', onSubmit: (event) => { event.preventDefault(); if (!saving) return update('add', url) }, children: [
         jsx('input', { type: 'url', required: true, value: url, placeholder: 'https://…', 'aria-label': '代码审阅链接',
           className: 'min-w-0 flex-1 border rounded px-1', onChange: (event) => setUrl(event.target.value) }),
         jsx(Button, { type: 'submit', variant: 'secondary', size: 'sm', disabled: saving, children: '保存' })
@@ -427,6 +430,7 @@ function DockPanel() {
   const state = (title, description) => panel(jsx(EmptyState, { title, description }))
   if (board.isLoading || (selectedTask === 'auto' && sessions.isLoading)) return state('加载任务和会话…')
   if (board.isError) return state('任务加载失败', board.error?.message)
+  if (staleBackend(board.data)) return panel(staleNotice())
   if (selectedTask === 'auto' && sessions.isError) return state('会话映射加载失败', (sessions.error?.message || '') + '；可手动选择任务')
   if (!activeZt) return state('当前会话未匹配任务', '请从上方手动选择任务，或打开含任务编号的会话')
   if (!task) return state(taskPrefix(activeZt, sessions.data?.zt_sessions) + ' 无活跃 worktree', '可从上方选择其他任务')
@@ -498,13 +502,15 @@ function DockPanel() {
 }
 
 // ─── Sidebar board page (full board, as before + dock opener) ────────────────
+async function openTaskSession(s) {
+  try { await host.openSession(s.id, { profile: s.profile || 'default' }) }
+  catch (error) { host.notify({ kind: 'error', message: '打开会话失败：' + (error.message || String(error)) }) }
+}
+
 function SessionChip({ s }) {
   return jsx('button', {
     className: 'rounded-full border border-(--ui-stroke-secondary) px-2 py-0.5 text-xs hover:bg-(--chrome-action-hover) truncate max-w-[14rem]',
-    title: s.title, onClick: async () => {
-      try { await host.openSession(s.id, { profile: s.profile || 'default' }) }
-      catch (error) { host.notify({ kind: 'error', message: '打开会话失败：' + (error.message || String(error)) }) }
-    }, children: s.title
+    title: s.title, onClick: () => openTaskSession(s), children: s.title
   })
 }
 
@@ -512,7 +518,9 @@ function TaskCard({ task, activeZt, onPickRepo, pickedDir, editorName = 'VS Code
   const sessions = useSessions()
   const chips = (sessions.data?.zt_sessions || {})[task.id] || []
   const profile = host.state.focusedSessionProfile?.get() || host.state.profile?.get() || 'default'
-  const title = (chips.find((s) => s.profile === profile) || chips[0])?.title || taskPrefix(task.id, sessions.data?.zt_sessions)
+  const preferred = chips.find((s) => (s.profile || 'default') === profile) || chips[0]
+  const [choosing, setChoosing] = useState(false)
+  const title = preferred?.title || taskPrefix(task.id, sessions.data?.zt_sessions)
   const isActive = activeZt === task.id
   return jsxs('div', {
     className: cn('db-card rounded-lg border bg-transparent', isActive ? 'border-(--accent)' : 'border-(--ui-stroke-secondary)'),
@@ -521,8 +529,16 @@ function TaskCard({ task, activeZt, onPickRepo, pickedDir, editorName = 'VS Code
         jsx('span', { className: 'db-title', title, children: title }),
         jsx(Badge, { variant: 'secondary', children: task.repos.length + ' 仓' }),
         isActive ? jsx(Badge, { variant: 'success', children: '当前会话' }) : null,
-        chips.length ? jsx('div', { className: 'db-session-chips', children: chips.map((s) => jsx(SessionChip, { s }, (s.profile || 'default') + ':' + s.id)) }) : null,
         jsxs('div', { className: 'ml-auto flex gap-1', children: [
+          preferred ? jsx(Button, { variant: 'ghost', size: 'sm', onClick: () => openTaskSession(preferred), children: '打开会话' }) : null,
+          chips.length > 1 ? jsx(Button, { variant: 'ghost', size: 'sm', onClick: () => setChoosing(!choosing), children: '选择会话' }) : null,
+          choosing && chips.length > 1 ? jsx(Select, { value: '', onValueChange: (value) => {
+            const s = chips.find((s) => JSON.stringify([s.profile || 'default', s.id]) === value)
+            if (s) { setChoosing(false); return openTaskSession(s) }
+          }, children: [
+            jsx(SelectTrigger, { children: jsx(SelectValue, { placeholder: '选择会话' }) }),
+            jsx(SelectContent, { children: chips.map((s) => jsx(SelectItem, { value: JSON.stringify([s.profile || 'default', s.id]), children: (s.profile || 'default') + ' · ' + s.title }, JSON.stringify([s.profile || 'default', s.id]))) })
+          ] }) : null,
           jsx(Button, {
             variant: 'ghost', size: 'sm',
             onClick: () => openEditor(task.id, editorName),
@@ -555,6 +571,7 @@ function BoardPage() {
   const [pickedDir, setPickedDir] = useState(null)
   if (board.isLoading) return jsx(EmptyState, { title: '加载 worktree…' })
   if (board.isError) return jsx(EmptyState, { title: '后端不可用', description: board.error?.message })
+  if (staleBackend(board.data)) return staleNotice()
   const tasks = board.data?.tasks || []
   const sorted = activeZt ? [...tasks.filter((t) => t.id === activeZt), ...tasks.filter((t) => t.id !== activeZt)] : tasks
   return jsxs(ScrollArea, { className: 'dev-board h-full', children: [

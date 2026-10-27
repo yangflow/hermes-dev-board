@@ -107,6 +107,24 @@ class PluginApiTests(unittest.TestCase):
         self.assertEqual(workspace.name, "Task-..%2F1234.code-workspace")
         self.assertEqual(workspace.parent, self.home / "cache/dev-board/workspaces")
 
+    def test_workspace_uses_session_label_and_keeps_identity_safe(self):
+        repo = self.repo("service-9246")
+        self.database(self.home / "state.db", [{"id": "s", "title": "ZT-9246 actual task"}])
+        self.editor("pass")
+        result = self.client.post("/open_editor?task=9246")
+        self.assertEqual(Path(result.json()["opened"][0]).name, "ZT-9246.code-workspace")
+        self.assertEqual(self.client.get("/board").json()["api_version"], api.API_VERSION)
+        names = []
+        for task, label in [("9246", "../GH-9246"), ("9246", "%2F-9246"), ("../9246", "GH-../9246")]:
+            with patch.object(api, "_task_worktrees", return_value=[(repo, task, "-9246")]), \
+                    patch.object(api, "task_sessions", return_value={"zt_sessions": {task: [{"label": label}]}}):
+                first = self.client.post("/open_editor", params={"task": task}).json()["opened"][0]
+                second = self.client.post("/open_editor", params={"task": task}).json()["opened"][0]
+            self.assertEqual(first, second)
+            self.assertEqual(Path(first).parent, self.home / "cache/dev-board/workspaces")
+            names.append(first)
+        self.assertEqual(len(set(names)), len(names))
+
     def test_real_editor_process_failure_is_http_error(self):
         self.repo("service-1234")
         self.editor("import sys\nprint('editor rejected workspace', file=sys.stderr)\nsys.exit(7)\n")
