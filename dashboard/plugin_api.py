@@ -1,6 +1,7 @@
 r"""Dev Board backend — worktree board by task id, session mapping, changes, diff, editor open.
 
-All knobs are environment variables (set them on the gateway process):
+Configuration uses gateway environment variables, plus optional live review-host
+settings in $HERMES_HOME/dev-board/settings.json:
   DEV_BOARD_WORKTREE_ROOTS  colon-separated worktree roots
                             (default: ~/.worktrees:~/code/.worktrees:~/code/.tmp-worktrees)
   DEV_BOARD_TASK_RE         regex for the task-id suffix of a worktree dir
@@ -42,16 +43,30 @@ _REVIEW_MAX_PAGES = 10
 
 def _review_hosts() -> dict:
     hosts = {"github.com": "github"}
-    try:
-        configured = json.loads(os.environ.get("DEV_BOARD_REVIEW_HOSTS", "{}"))
+
+    def merge(configured, source):
         if not isinstance(configured, dict) or any(
             not isinstance(h, str) or not re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]+)?", h)
             or p not in ("github", "gitlab") for h, p in configured.items()
         ):
-            raise ValueError()
+            raise HTTPException(500, f"invalid {source}: expected domain -> github|gitlab JSON object")
         hosts.update({h.lower(): p for h, p in configured.items()})
+
+    settings = Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))).expanduser() / "dev-board/settings.json"
+    try:
+        data = json.loads(settings.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        data = {}
+    except (OSError, ValueError):
+        raise HTTPException(500, "cannot read dev-board/settings.json: expected valid JSON settings object")
+    if not isinstance(data, dict) or set(data) - {"review_hosts"}:
+        raise HTTPException(500, "invalid dev-board/settings.json: expected object with optional review_hosts")
+    merge(data.get("review_hosts", {}), "dev-board/settings.json review_hosts")
+    try:
+        configured = json.loads(os.environ.get("DEV_BOARD_REVIEW_HOSTS", "{}"))
     except (TypeError, ValueError):
         raise HTTPException(500, "invalid DEV_BOARD_REVIEW_HOSTS: expected domain -> github|gitlab JSON object")
+    merge(configured, "DEV_BOARD_REVIEW_HOSTS")
     return hosts
 
 

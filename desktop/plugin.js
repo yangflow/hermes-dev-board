@@ -15,9 +15,51 @@ function taskPrefix(id, map = {}) {
   return (list.find((s) => s.profile === profile) || list[0])?.label || '#' + id
 }
 
+const boardStyles = `
+.dev-board { min-width:0; width:100%; max-width:100%; box-sizing:border-box; color:var(--ui-text-primary); font-size:12px; }
+.dev-board *, .dev-board *::before, .dev-board *::after { box-sizing:border-box; }
+.dev-board button, .dev-board input { max-width:100%; font:inherit; }
+.dev-board button { cursor:pointer; }
+.dev-board button:focus-visible, .dev-board input:focus-visible, .dev-board [tabindex]:focus-visible { outline:2px solid var(--ui-accent); outline-offset:2px; }
+.dev-board button:disabled { cursor:default; opacity:.5; }
+.dev-board .db-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:6px; min-width:0; }
+.dev-board .db-title { font-size:14px; font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1 1 100%; }
+.dev-board .db-card { border:1px solid var(--ui-stroke-secondary); border-radius:8px; overflow:hidden; }
+.dev-board .db-card-head { padding:12px 14px; }
+.dev-board .db-card-head > * { min-width:0; max-width:100%; }
+.dev-board .db-session-chips { display:flex; flex-wrap:wrap; gap:4px; min-width:0; max-width:100%; }
+.dev-board .db-session-chips > button { min-width:0; max-width:min(14rem, 100%); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.dev-board .db-repos { display:flex; flex-direction:column; gap:10px; padding:12px; }
+.dev-board .db-repo { min-width:0; padding:10px; border:1px solid var(--ui-stroke-secondary); border-radius:5px; }
+.dev-board .db-repo-head { display:flex; align-items:center; gap:6px; width:100%; min-width:0; border:0; background:transparent; color:inherit; text-align:left; padding:0 0 6px; }
+.dev-board .db-repo-name { font-size:13px; font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.dev-board .db-meta { font-size:12px; color:var(--ui-text-tertiary); min-width:0; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.dev-board .db-review { width:100%; min-width:0; font-size:12px; border-top:1px solid var(--ui-stroke-secondary); padding:8px 0 0; margin-top:6px; overflow-wrap:anywhere; }
+.dev-board .db-review-head { display:flex; align-items:center; flex-wrap:wrap; gap:4px; color:var(--ui-text-secondary); }
+.dev-board .db-review-head > span { flex:1 1 120px; }
+.dev-board .db-review-link { display:block; width:100%; border:0; background:transparent; color:var(--ui-accent); text-align:left; padding:5px 0; overflow-wrap:anywhere; }
+.dev-board .db-manual, .dev-board form { display:flex; gap:6px; align-items:center; min-width:0; }
+.dev-board .db-manual > button:first-child { flex:1; min-width:0; }
+.dev-board input { min-width:0; flex:1; padding:5px 6px; border:1px solid var(--ui-stroke-secondary); border-radius:4px; color:var(--ui-text-primary); background:transparent; }
+.dev-board .db-section { margin:10px 4px 4px; padding:6px 0; border-bottom:1px solid var(--ui-stroke-secondary); color:var(--ui-text-secondary); font-size:12px; font-weight:600; }
+.dev-board .db-tree { display:flex; align-items:center; gap:4px; width:100%; min-width:0; border:0; background:transparent; color:inherit; text-align:left; padding-top:4px; padding-bottom:4px; }
+.dev-board .db-tree:hover { background:var(--chrome-action-hover); }
+.dev-board .db-tree > span:nth-child(2) { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.dev-board .db-tree > span:last-child { flex-shrink:0; }
+.dev-board .db-dock-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:6px; min-width:0; padding:8px; border-bottom:1px solid var(--ui-stroke-secondary); }
+.dev-board .db-task-selector { min-width:0; padding:8px; border-bottom:1px solid var(--ui-stroke-secondary); }
+.dev-board .db-task-selector button { width:100%; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.dev-board .db-dock-toolbar button { min-width:0; max-width:100%; }
+.dev-board .db-dock-review { padding:8px; border-top:1px solid var(--ui-stroke-secondary); }
+.dev-board .db-dock-review .db-review { border:0; margin:0; padding:0; }
+`
+const boardStyle = () => jsx('style', { children: boardStyles })
+
 const REFRESH_MS = 15000
 let boardFetch = null
 let openExternal = null
+let closeDock = null
+let dockLifetime = null
 const rest = (path, options) => boardFetch(path, options)
 
 function useReviews(dir, branch) {
@@ -44,7 +86,7 @@ async function openReview(url) {
   }
 }
 
-function ReviewLinks({ repo, showRepo = true }) {
+function ReviewLinks({ repo, showRepo = true, compact = false }) {
   const query = useReviews(repo.dir, repo.branch)
   const [adding, setAdding] = useState(false)
   const [url, setUrl] = useState('')
@@ -68,21 +110,22 @@ function ReviewLinks({ repo, showRepo = true }) {
     } catch (failure) { setError(failure.message || String(failure)) }
     finally { setSaving(false) }
   }
-  return jsxs('div', { className: 'w-full text-xs px-2 py-1 border-t border-(--ui-stroke-secondary) min-w-0',
+  return jsxs('div', { className: 'db-review',
+    title: compact ? repo.repo + ' · ' + (repo.branch || '(detached)') : undefined,
     onClick: (event) => event.stopPropagation(), children: [
-      jsxs('div', { className: 'flex items-center gap-1 flex-wrap', children: [
-        jsx('span', { children: '代码审阅 · ' + (showRepo ? repo.repo + ' · ' : '') + (query.isLoading ? '加载中…' : query.isError ? '请求失败' :
+      jsxs('div', { className: 'db-review-head', children: [
+        jsx('span', { children: (compact ? '' : '代码审阅 · ') + (showRepo ? repo.repo + ' · ' : '') + (query.isLoading ? '加载中…' : query.isError ? '请求失败' :
           (reviews.length + manual.length) + ' · ' + (status[data?.status] || '等待加载')) }),
         jsx(Button, { variant: 'ghost', size: 'sm', disabled: query.isFetching, onClick: query.refresh, children: '刷新审阅' }),
         jsx(Button, { variant: 'ghost', size: 'sm', onClick: () => setAdding(!adding), children: '添加链接' })
       ]}),
       query.isError ? jsx('div', { role: 'alert', children: query.error?.message || '审阅请求失败' }) : null,
       data?.message && !['ok', 'empty', 'unsupported', 'unavailable', 'timeout', 'partial'].includes(data.status) ? jsx('div', { children: message }) : null,
-      ...reviews.map((r) => jsx('button', { type: 'button', className: 'block text-left break-words hover:underline',
+      ...reviews.map((r) => jsx('button', { type: 'button', className: 'db-review-link',
         onClick: () => openReview(r.url), children: (r.provider === 'gitlab' ? 'MR !' : 'PR #') + r.number + ' ' + r.title +
           ' → ' + r.target_branch + ' · ' + ({ merged: '已合并', open: '待合并', opened: '待合并', closed: '已关闭' }[r.state] || r.state) + (r.draft ? ' · 草稿' : '') }, r.provider + ':' + r.number)),
-      ...manual.map((link) => jsxs('div', { className: 'flex gap-1 items-center', children: [
-        jsx('button', { type: 'button', className: 'break-all text-left hover:underline', onClick: () => openReview(link), children: '手工 · ' + link }),
+      ...manual.map((link) => jsxs('div', { className: 'db-manual', children: [
+        jsx('button', { type: 'button', className: 'db-review-link', onClick: () => openReview(link), children: '手工 · ' + link }),
         jsx(Button, { variant: 'ghost', size: 'sm', disabled: saving, onClick: () => update('remove', link), children: '移除' })
       ] }, link)),
       adding ? jsxs('form', { className: 'flex gap-1', onSubmit: (event) => { event.preventDefault(); if (!saving) return update('add', url) }, children: [
@@ -132,11 +175,14 @@ function useActiveZt() {
 }
 
 async function openDock(map) {
+  const lifetime = dockLifetime
   try {
     const active = activeTask(map || (await rest('/zt_sessions')).zt_sessions || {})
+    if (!lifetime?.active) return
     if (active) await host.openSession(active.session.id, { profile: active.session.profile || 'default' })
     else host.navigate('/')
-    await host.openWorkspace('worktree', {
+    if (!lifetime?.active) return
+    closeDock = host.openWorkspace('worktree', {
       dock: { pane: 'workspace', pos: 'right' }, title: 'Worktree', minWidth: '24rem',
       render: () => jsx(DockPanel, {})
     })
@@ -249,8 +295,9 @@ function buildTree(files) {
 function TreeRow({ row, expanded, onToggle, onPick, pickedKey }) {
   const common = 'flex items-center gap-1 rounded px-1 py-0.5 text-xs cursor-pointer hover:bg-(--chrome-action-hover)'
   if (row.type === 'dir') {
-    return jsxs('div', {
-      className: common + (expanded.has(row.key) ? ' bg-(--chrome-action-hover)/50' : ''),
+    return jsxs('button', {
+      type: 'button', 'aria-expanded': expanded.has(row.key), title: row.name,
+      className: 'db-tree ' + common + (expanded.has(row.key) ? ' bg-(--chrome-action-hover)/50' : ''),
       style: { paddingLeft: 4 + row.depth * 12 },
       onClick: onToggle,
       children: [
@@ -265,8 +312,9 @@ function TreeRow({ row, expanded, onToggle, onPick, pickedKey }) {
   }
   const st = row.status
   const stColor = st === '?' ? 'var(--ui-text-tertiary)' : st === 'D' ? 'var(--ui-red)' : st === 'A' ? 'var(--ui-green)' : 'var(--ui-text-secondary)'
-  return jsxs('div', {
-    className: common + (pickedKey === row.key ? ' bg-(--chrome-action-hover)' : ''),
+  return jsxs('button', {
+    type: 'button', title: row.path || row.name,
+    className: 'db-tree ' + common + (pickedKey === row.key ? ' bg-(--chrome-action-hover)' : ''),
     style: { paddingLeft: 4 + row.depth * 12 + 14 },
     onClick: onPick,
     children: [
@@ -315,12 +363,12 @@ function FileCompare({ dir, file, diff }) {
     const kind = row && !row.hunk ? row.kind : null
     let bg = 'transparent', color = 'var(--ui-text-secondary)'
     if (kind === 'ctx') { /* default */ }
-    else if (kind === 'add') { if (side === 'n') { bg = 'rgba(46,160,67,.14)'; color = 'var(--ui-green)' } }
-    else if (kind === 'del') { if (side === 'o') { bg = 'rgba(248,81,73,.14)'; color = 'var(--ui-red)' } }
-    else if (kind === 'mod') { if (side === 'n') { bg = 'rgba(46,160,67,.14)' } else { bg = 'rgba(248,81,73,.14)' } }
+    else if (kind === 'add') { if (side === 'n') { bg = 'color-mix(in srgb, var(--ui-green) 14%, transparent)'; color = 'var(--ui-green)' } }
+    else if (kind === 'del') { if (side === 'o') { bg = 'color-mix(in srgb, var(--ui-red) 14%, transparent)'; color = 'var(--ui-red)' } }
+    else if (kind === 'mod') { if (side === 'n') { bg = 'color-mix(in srgb, var(--ui-green) 14%, transparent)' } else { bg = 'color-mix(in srgb, var(--ui-red) 14%, transparent)' } }
     return jsxs('div', {
       className: 'flex font-mono text-[0.6875rem] leading-[1.15rem] min-w-0',
-      style: { background: line ? bg : 'rgba(128,128,128,.06)' },
+      style: { background: line ? bg : 'color-mix(in srgb, var(--ui-text-tertiary) 6%, transparent)' },
       children: [
         jsx('span', { className: 'w-9 shrink-0 text-right pr-1.5 select-none text-(--ui-text-tertiary) tabular-nums', children: line ? line.no : '' }),
         jsx('span', { className: 'flex-1 whitespace-pre-wrap break-all px-1', style: { color }, children: line ? line.text : '' })
@@ -364,17 +412,18 @@ function DockPanel() {
     window.addEventListener('dev-board-back', back)
     return () => window.removeEventListener('dev-board-back', back)
   }, [])
-  const taskSelector = jsx('div', { className: 'px-2 py-1.5 border-b border-(--ui-stroke-secondary)', children: jsx(Select, {
+  const taskTitle = (sessions.data?.zt_sessions?.[activeZt] || []).find((s) => s.profile === (host.state.focusedSessionProfile?.get() || host.state.profile?.get() || 'default'))?.title || (sessions.data?.zt_sessions?.[activeZt] || [])[0]?.title || taskPrefix(activeZt, sessions.data?.zt_sessions)
+  const taskSelector = jsx('div', { className: 'db-task-selector', children: jsx(Select, {
     value: selectedTask, onValueChange: setSelectedTask,
     children: [
       jsx(SelectTrigger, { className: 'h-7 text-xs w-full', children: jsx(SelectValue, { placeholder: '选择任务' }) }),
       jsx(SelectContent, { children: [
         jsx(SelectItem, { value: 'auto', children: '跟随当前会话' }),
-        ...(board.data?.tasks || []).map((t) => jsx(SelectItem, { value: t.id, children: taskPrefix(t.id, sessions.data?.zt_sessions) }, t.id))
+        ...(board.data?.tasks || []).map((t) => jsx(SelectItem, { value: t.id, children: (sessions.data?.zt_sessions?.[t.id] || [])[0]?.title || taskPrefix(t.id, sessions.data?.zt_sessions) }, t.id))
       ]})
     ]
   }) })
-  const panel = (content) => jsxs('div', { className: 'h-full flex flex-col min-h-0', children: [taskSelector, content] })
+  const panel = (content) => jsxs('div', { className: 'dev-board h-full flex flex-col min-h-0', children: [boardStyle(), taskSelector, content] })
   const state = (title, description) => panel(jsx(EmptyState, { title, description }))
   if (board.isLoading || (selectedTask === 'auto' && sessions.isLoading)) return state('加载任务和会话…')
   if (board.isError) return state('任务加载失败', board.error?.message)
@@ -392,7 +441,7 @@ function DockPanel() {
   }
 
   // tree rows
-  const tree = buildTree(files)
+  const tree = buildTree(files.map((f) => ({ ...f, path: repoFilter === 'all' ? f.repo + '/' + f.path : f.path, originalPath: f.path })))
   const rows = []
   const walk = (node, depth, prefix) => {
     const dirs = [...node.dirs.values()].sort((a, b) => a.name.localeCompare(b.name))
@@ -400,18 +449,19 @@ function DockPanel() {
       const key = prefix + child.name + '/'
       const total = tree.countAll(child)
       rows.push({ type: 'dir', key, name: child.name, depth, added: total.added, removed: total.removed })
-      if (expanded.has(key)) walk(child, depth + 1, key)
+      if ((repoFilter === 'all' && depth === 0) || expanded.has(key)) walk(child, depth + 1, key)
     }
     for (const f of node.files.sort((a, b) => a.name.localeCompare(b.name))) {
-      rows.push({ type: 'file', key: prefix + f.path, path: f.path, dir: f.dir, repo: f.repo, status: f.status, added: f.added, removed: f.removed, name: f.name, depth: depth + 1 })
+      rows.push({ type: 'file', key: prefix + f.path, path: f.originalPath, dir: f.dir, repo: f.repo, status: f.status, added: f.added, removed: f.removed, name: f.name, depth: depth + 1 })
     }
   }
   walk(tree.root, 0, '')
 
-  return jsxs('div', { className: 'h-full flex flex-col min-h-0', children: [
-    taskSelector,
-    jsxs('div', { className: 'flex items-center gap-2 px-2 py-1.5 border-b border-(--ui-stroke-secondary) flex-wrap', children: [
-      jsx('span', { className: 'font-semibold text-sm', children: taskPrefix(activeZt, sessions.data?.zt_sessions) }),
+  return jsxs('div', { className: 'dev-board h-full flex flex-col min-h-0', children: [
+    boardStyle(), taskSelector,
+    jsxs('div', { className: 'db-dock-toolbar', children: [
+      jsx('span', { className: 'db-title', title: taskTitle, children: taskTitle }),
+      jsx(Button, { variant: 'ghost', size: 'sm', onClick: () => openEditor(task.id, board.data?.editor_name || 'VS Code'), children: '在 ' + (board.data?.editor_name || 'VS Code') + ' 打开' }),
       jsx(Select, {
         value: repoFilter,
         onValueChange: (v) => { setRepoFilter(v); setExpanded(new Set()) },
@@ -427,7 +477,7 @@ function DockPanel() {
     ]}),
     jsx(ScrollArea, { className: 'flex-1 min-h-0', children:
       jsxs('div', { className: 'flex flex-col gap-0.5 p-1', children: [
-        ...task.repos.filter((r) => repoFilter === 'all' || r.repo === repoFilter).map((r) => jsx(ReviewLinks, { repo: r }, r.dir)),
+        jsx('h3', { className: 'db-section', children: '文件变更' }),
         ...rows.map((row) => row.type === 'dir'
           ? jsx(TreeRow, {
               row, expanded,
@@ -439,7 +489,9 @@ function DockPanel() {
               onPick: () => setPicked({ dir: row.dir, path: row.path, repo: row.repo }),
               pickedKey: null
             }, row.key)),
-        !rows.length ? jsx('div', { className: 'text-xs text-(--ui-text-tertiary) px-2 py-1', children: '无未提交变更' }) : null
+        !rows.length ? jsx('div', { className: 'text-xs text-(--ui-text-tertiary) px-2 py-1', children: '无未提交变更' }) : null,
+        jsx('h3', { className: 'db-section', children: 'PR/MR' }),
+        ...task.repos.filter((r) => repoFilter === 'all' || r.repo === repoFilter).map((r) => jsx('div', { className: 'db-dock-review', children: jsx(ReviewLinks, { repo: r, compact: true }) }, r.dir))
       ]})
     })
   ]})
@@ -463,13 +515,13 @@ function TaskCard({ task, activeZt, onPickRepo, pickedDir, editorName = 'VS Code
   const title = (chips.find((s) => s.profile === profile) || chips[0])?.title || taskPrefix(task.id, sessions.data?.zt_sessions)
   const isActive = activeZt === task.id
   return jsxs('div', {
-    className: cn('rounded-lg border bg-transparent', isActive ? 'border-(--accent)' : 'border-(--ui-stroke-secondary)'),
+    className: cn('db-card rounded-lg border bg-transparent', isActive ? 'border-(--accent)' : 'border-(--ui-stroke-secondary)'),
     children: [
-      jsxs('div', { className: 'flex items-center gap-2 px-3 py-2 border-b border-(--ui-stroke-secondary) flex-wrap', children: [
-        jsx('span', { className: 'font-semibold break-words min-w-0', children: title }),
+      jsxs('div', { className: 'db-card-head db-toolbar border-b border-(--ui-stroke-secondary)', children: [
+        jsx('span', { className: 'db-title', title, children: title }),
         jsx(Badge, { variant: 'secondary', children: task.repos.length + ' 仓' }),
         isActive ? jsx(Badge, { variant: 'success', children: '当前会话' }) : null,
-        chips.length ? jsx('div', { className: 'flex gap-1 flex-wrap', children: chips.map((s) => jsx(SessionChip, { s }, (s.profile || 'default') + ':' + s.id)) }) : null,
+        chips.length ? jsx('div', { className: 'db-session-chips', children: chips.map((s) => jsx(SessionChip, { s }, (s.profile || 'default') + ':' + s.id)) }) : null,
         jsxs('div', { className: 'ml-auto flex gap-1', children: [
           jsx(Button, {
             variant: 'ghost', size: 'sm',
@@ -478,15 +530,17 @@ function TaskCard({ task, activeZt, onPickRepo, pickedDir, editorName = 'VS Code
           })
         ]})
       ]}),
-      jsx('div', { className: 'flex flex-col gap-1 p-2', children: task.repos.map((r) => jsxs('div', {
-        className: cn('flex flex-wrap items-center gap-2 rounded-md border border-(--ui-stroke-secondary) px-2 py-1.5 text-[0.8125rem] hover:bg-(--chrome-action-hover) cursor-pointer', pickedDir === r.dir && 'bg-(--chrome-action-hover)'),
-        onClick: () => onPickRepo(r),
+      jsx('div', { className: 'db-repos', children: task.repos.map((r) => jsxs('div', {
+        className: 'db-repo',
+        style: pickedDir === r.dir ? { borderColor: 'var(--ui-accent)' } : undefined,
         children: [
-          jsx(StatusDot, { tone: r.dirty > 0 ? 'warn' : 'good' }),
-          jsx('span', { className: 'font-medium min-w-[7rem]', children: r.repo }),
-          jsx('span', { className: 'text-(--ui-text-tertiary) truncate max-w-[10rem]', children: r.branch || '(detached)' }),
-          jsx('span', { className: 'ml-auto text-(--ui-text-tertiary) tabular-nums text-xs break-words min-w-0', children: r.last || '—' }),
-          r.dirty > 0 ? jsx(Badge, { variant: 'warning', children: r.dirty + ' 未提交' }) : null,
+          jsxs('button', { type: 'button', className: 'db-repo-head', onClick: () => onPickRepo(r), 'aria-pressed': pickedDir === r.dir, title: r.dir, children: [
+            jsx(StatusDot, { tone: r.dirty > 0 ? 'warn' : 'good' }),
+            jsx('span', { className: 'db-repo-name', children: r.repo }),
+            r.dirty > 0 ? jsx(Badge, { variant: 'warning', children: r.dirty + ' 未提交' }) : null
+          ]}),
+          jsx('div', { className: 'db-meta', title: r.branch || '(detached)', children: r.branch || '(detached)' }),
+          jsx('div', { className: 'db-meta', title: r.last || '—', children: r.last || '—' }),
           jsx(ReviewLinks, { repo: r, showRepo: false })
         ]
       }, r.dir)) })
@@ -503,9 +557,9 @@ function BoardPage() {
   if (board.isError) return jsx(EmptyState, { title: '后端不可用', description: board.error?.message })
   const tasks = board.data?.tasks || []
   const sorted = activeZt ? [...tasks.filter((t) => t.id === activeZt), ...tasks.filter((t) => t.id !== activeZt)] : tasks
-  return jsxs(ScrollArea, { className: 'h-full', children: [
-    jsxs('div', { className: 'flex flex-col gap-2 p-3', children: [
-      jsxs('div', { className: 'flex items-center gap-2 text-(--ui-text-tertiary) text-xs', children: [
+  return jsxs(ScrollArea, { className: 'dev-board h-full', children: [
+    boardStyle(), jsxs('div', { className: 'flex flex-col gap-2 p-3', children: [
+      jsxs('div', { className: 'db-toolbar text-(--ui-text-tertiary) text-xs', children: [
         jsx('span', { children: tasks.length + ' 个任务' + (activeZt ? ' · 当前 ' + taskPrefix(activeZt, sessions.data?.zt_sessions) : '') }),
         jsx(Button, {
           variant: 'secondary', size: 'sm',
@@ -524,6 +578,13 @@ export default {
   name: 'Dev Board',
   description: 'Cross-repo worktree board linked to the current session, with a chat-side dock panel.',
   register(ctx) {
+    const lifetime = { active: true }
+    dockLifetime = lifetime
+    ctx.onDispose(() => {
+      lifetime.active = false
+      closeDock?.()
+      closeDock = null
+    })
     boardFetch = (path, options) => ctx.rest(path, options)
     openExternal = (url) => ctx.os.openExternal(url)
     ctx.register({ id: 'page', area: ROUTES_AREA, data: { path: '/dev-board' }, render: () => jsx(BoardPage, {}) })
