@@ -22,6 +22,7 @@ side-by-side diffs of the task you are currently talking about.
   - a **side-by-side file diff** (old / new columns, own line numbers, add/del/mod row alignment);
   - one-click **open in editor**: every worktree of the task in one multi-root window
     (VS Code by default, configurable).
+- **Code review links** in every board repo row and the chat panel (All / per-repo): PRs/MRs, drafts, states, target branches, manual links and refresh.
 - 15 s auto-refresh; untracked files get a synthesized `new file` diff.
 
 ## Install
@@ -62,10 +63,57 @@ Requires the Hermes desktop app with plugin support.
 | `DEV_BOARD_TASK_RE` | `-(\d{2,6})$` | Regex for the task-id suffix of a worktree dir (`repo-1234` → task `1234`) |
 | `DEV_BOARD_TITLE_RE` | `([A-Za-z]+-\d{2,6})` | Regex extracting a task id from a session title (`ZT-9248 …`, `GH-12 …`) |
 | `DEV_BOARD_SESSION_DBS` | `$HERMES_HOME/state.db` + `profiles/*/state.db` | Colon-separated session stores to map sessions → tasks |
+| `DEV_BOARD_REVIEW_HOSTS` | `{"github.com":"github"}` | JSON domain → `github` or `gitlab`; additional hosts explicitly enabled |
 | `DEV_BOARD_EDITOR` | `Visual Studio Code` (macOS) / `code` | Editor for the multi-root open |
 
 Any ticket prefix works — ZT, GH, JIRA, plain numbers — as long as the title regex matches it.
 Nothing is ZT-specific; the prefix shown in the UI is taken from the matched session label.
+
+## Code review links
+
+Set these on the gateway process, then restart it (examples only; no token configuration):
+
+```bash
+export DEV_BOARD_REVIEW_HOSTS='{"github.com":"github","gitlab.com":"gitlab","git.example.com":"gitlab","github.example.com":"github"}'
+export DEV_BOARD_WORKTREE_ROOTS="$HOME/projects/.worktrees"
+```
+
+Only `github.com` is enabled by default. GitLab.com and self-hosted domains must be configured.
+HTTPS, SSH URLs and scp-style remotes (`git@git.example.com:group/repo.git`) are parsed without exposing
+embedded credentials. SSH ports are Git transport ports; HTTPS ports can be included in configured domains.
+The source is the current worktree branch and its remote, selected in Git push order:
+`branch.<branch>.pushRemote`, `remote.pushDefault`, `branch.<branch>.remote`, then `origin`; its push URL is used (including `remote.<name>.pushurl`).
+There is no task-number or title matching for reviews. Detached HEAD, missing/invalid remotes and
+invalid host configuration produce visible errors. Discovery is restricted to the board's discovered
+worktrees; the review API rejects arbitrary repositories and symlink escapes.
+
+The gateway uses `gh api --method GET` / `glab api --method GET` with the exact repository and source
+branch, then verifies source repository and branch in each result. These queries list reviews in the
+remote repository; reviews targeting a different fork repository are outside this query's scope.
+Open, closed, merged and draft reviews are included, deduplicated by provider/number and sorted by
+number descending. Sign in to `gh` / `glab` for the configured host **as the gateway's OS user** using
+the CLI's existing login. The plugin neither stores tokens nor creates/edits reviews. The gateway's
+PATH must contain the applicable CLI. Missing CLI, authentication/permission/provider errors, timeout,
+unsupported host and an empty successful query have separate visible states. Raw CLI diagnostics are
+not returned because they can contain credentials.
+
+Reviews have a separate 60-second refresh/cache, independent of the 15-second board scan. The backend
+cache holds at most 256 repository/branch/provider entries for 60 seconds (including failed queries).
+**刷新审阅** forces a new query; `GET /reviews?dir=<discovered-worktree>&force=true` bypasses the cache.
+Each query has a 15-second total CLI timeout. Pagination follows next-page headers, with a conservative
+full-page fallback, up to 10 pages of 100 results. Hitting the limit explicitly displays **incomplete**;
+failed pages display an error rather than claiming an empty or complete result.
+
+**添加链接** opens a small URL form; **移除** removes that manual association only. Manual links accept
+HTTP(S) URLs without credentials, work for unknown hosts and do not require a CLI login. The plugin
+**never fetches manual URLs**, including for titles or status. They are stored in
+`$HERMES_HOME/cache/dev-board/review-links.json` (default `~/.hermes/cache/dev-board/review-links.json`),
+scoped by sanitized repository identity plus exact branch, shared by worktrees with that same identity
+and branch, and preserved across restarts. Manual entries are marked as manual and do not invent PR/MR
+metadata. Updates use `POST /review_links?dir=…&action=add|remove&url=…`, thread locking and an atomic
+file replacement; unreadable/corrupt data is reported without overwriting it. Link clicks open through
+the desktop SDK's `ctx.os.openExternal`; failures are displayed. The task selector and changed-file
+view continue to work alongside reviews.
 
 ## How it maps tasks
 
@@ -77,8 +125,8 @@ Nothing is ZT-specific; the prefix shown in the UI is taken from the matched ses
 ## Security notes
 
 - `changes`/`diff` reject any `dir` outside the configured worktree roots and any `file` with `..`.
-- The backend is read-only except `open_editor`, which only spawns the configured editor with
-  paths under the worktree roots.
+- Review discovery is read-only. Manual review-link POSTs write only the local association file;
+  `open_editor` spawns the configured editor with paths under the worktree roots.
 - Session stores are opened SQLite read-only (`mode=ro`).
 
 ## Uninstall

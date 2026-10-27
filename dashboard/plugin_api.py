@@ -22,11 +22,248 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
+import threading
+import time
+from collections import OrderedDict
 from pathlib import Path
+from urllib.parse import quote, urlencode, urlsplit
 
 from fastapi import APIRouter, HTTPException, Query
 
 router = APIRouter()
+
+_review_cache = OrderedDict()
+_review_cache_lock = threading.Lock()
+_manual_links_lock = threading.Lock()
+_REVIEW_TTL = 60
+_REVIEW_TIMEOUT = 15
+_REVIEW_MAX_PAGES = 10
+
+
+def _review_hosts() -> dict:
+    hosts = {"github.com": "github"}
+    try:
+        configured = json.loads(os.environ.get("DEV_BOARD_REVIEW_HOSTS", "{}"))
+        if not isinstance(configured, dict) or any(
+            not isinstance(h, str) or not re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]+)?", h)
+            or p not in ("github", "gitlab") for h, p in configured.items()
+        ):
+            raise ValueError()
+        hosts.update({h.lower(): p for h, p in configured.items()})
+    except (TypeError, ValueError):
+        raise HTTPException(500, "invalid DEV_BOARD_REVIEW_HOSTS: expected domain -> github|gitlab JSON object")
+    return hosts
+
+
+def _review_remote(raw: str) -> tuple[str, str] | None:
+    try:
+        if "://" in raw:
+            parsed = urlsplit(raw)
+            if parsed.scheme not in ("https", "http", "ssh") or not parsed.hostname:
+                return None
+            host = parsed.hostname.lower()
+            # SSH ports address Git, not the provider's HTTPS API.
+            if parsed.port and parsed.scheme != "ssh":
+                host += ":" + str(parsed.port)
+            path = parsed.path.lstrip("/")
+        else:
+            match = re.fullmatch(r"(?:[^@/\s]+@)?([A-Za-z0-9.-]+):(.+)", raw)
+            if not match:
+                return None
+            host, path = match.group(1).lower(), match.group(2)
+        path = path.rstrip("/").removesuffix(".git")
+        if not re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]+)?", host) or len(path.split("/")) < 2:
+            return None
+        if any(not re.fullmatch(r"[A-Za-z0-9_.-]+", part) or part in (".", "..") for part in path.split("/")):
+            return None
+        return host, path
+    except ValueError:
+        return None
+
+
+def _review_dir(dir_: str) -> Path:
+    d = _validate_dir(dir_)
+    # Only a discovered immediate worktree is eligible; reject root/path symlink escapes.
+    for candidate, _, _ in _task_worktrees():
+        if (not candidate.is_symlink() and not (candidate / ".git").is_symlink() and candidate.resolve() == d
+                and candidate.resolve().parent == candidate.parent.resolve()):
+            return d
+    raise HTTPException(403, "dir is not a discovered worktree")
+
+
+def _review_source(d: Path) -> tuple[str, str, str]:
+    branch = _run(["git", "branch", "--show-current"], d)
+    if not branch:
+        raise HTTPException(409, "code review requires a source branch (detached HEAD)")
+    remote = (_run(["git", "config", "--get", f"branch.{branch}.pushRemote"], d)
+              or _run(["git", "config", "--get", "remote.pushDefault"], d)
+              or _run(["git", "config", "--get", f"branch.{branch}.remote"], d) or "origin")
+    source = _review_remote(_run(["git", "remote", "get-url", "--push", "--", remote], d))
+    if not source:
+        raise HTTPException(409, "code review requires a supported repository remote format")
+    return source[0], source[1], branch
+
+
+def _review_url(url: str) -> str:
+    try:
+        p = urlsplit(url)
+        if (p.scheme not in ("http", "https") or not p.hostname or p.username is not None or p.password is not None
+                or any(c.isspace() or ord(c) < 32 for c in url) or "\\" in url):
+            raise ValueError()
+        p.port
+    except (TypeError, ValueError):
+        raise HTTPException(400, "review URL must be http(s) without credentials")
+    return url
+
+
+def _review_api(cli: str, host: str, endpoint: str, deadline: float) -> tuple[object, dict]:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise subprocess.TimeoutExpired(cli, _REVIEW_TIMEOUT)
+    result = subprocess.run([cli, "api", "--hostname", host, "--method", "GET", "--include", endpoint],
+                            capture_output=True, text=True, timeout=remaining, stdin=subprocess.DEVNULL)
+    if result.returncode:
+        # CLI diagnostics can contain URLs or credentials; never return them to clients.
+        raise ValueError(f"{cli} query failed (exit {result.returncode}); check CLI login, permissions and host configuration")
+    headers = {}
+    body = result.stdout.replace("\r\n", "\n")
+    if body.startswith("HTTP/"):
+        header, body = body.split("\n\n", 1)
+        headers = {k.strip().lower(): v.strip() for line in header.splitlines()[1:]
+                   for k, sep, v in [line.partition(":")] if sep}
+    return json.loads(body), headers
+
+
+def _query_reviews(provider: str, host: str, repo: str, branch: str) -> dict:
+    cli = "gh" if provider == "github" else "glab"
+    deadline = time.monotonic() + _REVIEW_TIMEOUT
+    reviews = {}
+    try:
+        project = None
+        if provider == "gitlab":
+            info, _ = _review_api(cli, host, "projects/" + quote(repo, safe=""), deadline)
+            project = info["id"]
+        for page in range(1, _REVIEW_MAX_PAGES + 1):
+            params = {"state": "all", "per_page": 100, "page": page}
+            if provider == "github":
+                params["head"] = repo.split("/")[0] + ":" + branch
+                endpoint = "repos/" + quote(repo, safe="/") + "/pulls"
+            else:
+                params.update({"scope": "all", "source_branch": branch})
+                endpoint = "projects/" + quote(repo, safe="") + "/merge_requests"
+            rows, headers = _review_api(cli, host, endpoint + "?" + urlencode(params), deadline)
+            if not isinstance(rows, list):
+                raise ValueError("provider returned an invalid review list")
+            for row in rows:
+                if provider == "github":
+                    if row["head"]["ref"] != branch or (row["head"].get("repo") or {}).get("full_name", "").casefold() != repo.casefold():
+                        continue
+                    number, url, target = row["number"], row["html_url"], row["base"]["ref"]
+                    state = "merged" if row.get("merged_at") else row["state"]
+                else:
+                    if row["source_branch"] != branch or row["source_project_id"] != project:
+                        continue
+                    number, url, target = row["iid"], row["web_url"], row["target_branch"]
+                    state = "open" if row["state"] == "opened" else row["state"]
+                url = _review_url(url)
+                reviews[(provider, number)] = {"provider": provider, "number": number, "title": row["title"],
+                    "url": url, "state": state, "draft": bool(row.get("draft") or row.get("work_in_progress")), "target_branch": target}
+            if "x-next-page" in headers:
+                more = bool(headers["x-next-page"])
+            elif "link" in headers:
+                more = 'rel="next"' in headers["link"]
+            else:
+                more = len(rows) >= 100
+            if not more:
+                break
+        items = sorted(reviews.values(), key=lambda r: (-r["number"], r["provider"]))
+        return {"status": "partial" if more else "ok" if items else "empty", "reviews": items,
+                "message": "pagination limit reached; results are incomplete" if more else ""}
+    except FileNotFoundError:
+        return {"status": "unavailable", "reviews": [], "message": f"{cli} is not installed on the gateway"}
+    except subprocess.TimeoutExpired:
+        return {"status": "timeout", "reviews": [], "message": f"review query timed out after {_REVIEW_TIMEOUT} seconds"}
+    except (OSError, ValueError, KeyError, TypeError, HTTPException):
+        return {"status": "error", "reviews": [], "message": f"{cli} query failed; check CLI login, permissions, host configuration and response format"}
+
+
+def _manual_file() -> Path:
+    return Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))).expanduser() / "cache/dev-board/review-links.json"
+
+
+def _manual_read() -> dict:
+    path = _manual_file()
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+        if not isinstance(data, dict) or any(not isinstance(v, list) or any(not isinstance(u, str) for u in v) for v in data.values()):
+            raise ValueError()
+        for urls in data.values():
+            for url in urls:
+                _review_url(url)
+        return data
+    except (OSError, ValueError, HTTPException):
+        raise HTTPException(500, "cannot read manual review links")
+
+
+@router.get("/reviews")
+def review_links(dir: str = Query(...), force: bool = False) -> dict:
+    host, repo, branch = _review_source(_review_dir(dir))
+    provider = _review_hosts().get(host)
+    key = (provider, host, repo, branch)
+    with _review_cache_lock:
+        cached = _review_cache.get(key)
+        result = cached[1] if cached and not force and time.monotonic() - cached[0] < _REVIEW_TTL else None
+    if result is None:
+        result = (_query_reviews(provider, host, repo, branch) if provider else
+                  {"status": "unsupported", "reviews": [], "message": "host is not configured; manual links only"})
+        with _review_cache_lock:
+            now = time.monotonic()
+            for old in [k for k, v in _review_cache.items() if now - v[0] >= _REVIEW_TTL]:
+                del _review_cache[old]
+            _review_cache[key] = (now, result)
+            _review_cache.move_to_end(key)
+            while len(_review_cache) > 256:
+                _review_cache.popitem(last=False)
+    with _manual_links_lock:
+        manual = _manual_read().get(json.dumps([host + "/" + repo, branch]), [])
+    return {**result, "repository": host + "/" + repo, "branch": branch, "manual": manual}
+
+
+@router.post("/review_links")
+def update_review_link(dir: str = Query(...), url: str = Query(...), action: str = Query(...)) -> dict:
+    host, repo, branch = _review_source(_review_dir(dir))
+    url = _review_url(url)
+    if action not in ("add", "remove"):
+        raise HTTPException(400, "action must be add or remove")
+    key = json.dumps([host + "/" + repo, branch])
+    with _manual_links_lock:
+        data = _manual_read()
+        urls = set(data.get(key, []))
+        urls.add(url) if action == "add" else urls.discard(url)
+        if urls:
+            data[key] = sorted(urls)
+        else:
+            data.pop(key, None)
+        path = _manual_file()
+        temporary = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=".review-links-", delete=False) as stream:
+                temporary = stream.name
+                json.dump(data, stream, ensure_ascii=False, indent=2)
+                stream.write("\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+        except OSError:
+            raise HTTPException(500, "cannot save manual review links")
+        finally:
+            if temporary and os.path.exists(temporary):
+                os.unlink(temporary)
+    return {"ok": True}
 
 
 def _roots() -> list[Path]:
