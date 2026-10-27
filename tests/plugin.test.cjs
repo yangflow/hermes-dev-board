@@ -23,7 +23,7 @@ function harness() {
   }
   const session = { id: 'stored', title: 'ZT-1234 task', label: 'ZT-1234', profile: 'dev' }
   const results = {
-    'dev-board': { data: { tasks: [{ id: '1234', repos: [] }, { id: '5678', repos: [] }] } },
+    'dev-board': { data: { api_version: 2, tasks: [{ id: '1234', repos: [] }, { id: '5678', repos: [] }] } },
     'dev-board-sessions': { data: { zt_sessions: { 1234: [session] } } },
     'dev-board-task-changes': { data: { files: [], repos: [] } }
   }
@@ -482,4 +482,56 @@ test('all repositories retain identical file paths as distinct selectable identi
   rows[1].props.onPick()
   h.render(h.api.DockPanel)
   assert.deepEqual(plain(h.queries.findLast((q) => q.queryKey[0] === 'dev-board-diff').queryKey), ['dev-board-diff', '/worktrees/web', 'same.py'])
+})
+
+ test('task session action prefers focused profile and selection is explicit', async () => {
+  const h = harness()
+  const other = { ...h.session, id: 'other', profile: 'default' }
+  h.results['dev-board-sessions'].data.zt_sessions['1234'] = [other, h.session]
+  const render = () => h.render(h.api.TaskCard, { task: { id: '1234', repos: [] } })
+  let card = render()
+  assert.equal(nodes(card).filter(n => n.type === h.api.SessionChip).length, 0)
+  assert.equal(nodes(card).filter(n => n.type === 'Select').length, 0)
+  await button(card, '打开会话')()
+  assert.deepEqual(plain(h.calls.at(-1)), ['session', 'stored', { profile: 'dev' }])
+  button(card, '选择会话')()
+  card = render()
+  await nodes(card).find(n => n.type === 'Select').props.onValueChange(JSON.stringify(['default', 'other']))
+  assert.deepEqual(plain(h.calls.at(-1)), ['session', 'other', { profile: 'default' }])
+  assert.equal(nodes(render()).filter(n => n.type === 'Select').length, 0)
+  h.state.focusedSessionProfile.set('missing')
+  await button(render(), '打开会话')()
+  assert.equal(h.calls.at(-1)[1], 'other')
+  h.host.openSession = async () => { throw new Error('profile unavailable') }
+  await button(render(), '打开会话')()
+  assert.match(h.notices.at(-1).message, /打开会话失败：profile unavailable/)
+ })
+ test('stale backend notice explains gateway reload in board and dock', () => {
+  for (const version of [undefined, 1, 3]) {
+    for (const component of ['BoardPage', 'DockPanel']) {
+      const h = harness()
+      h.results['dev-board'].data.api_version = version
+      const node = h.render(h.api[component])
+      const notice = nodes(node).find(n => n.type === 'EmptyState')
+      assert.match(notice.props.title, /版本不匹配/)
+      assert.match(notice.props.description, /重启.*网关/)
+    }
+  }
+ })
+ test('detached review state explains branch requirement and prevents manual add', () => {
+  const h = harness()
+  h.results['dev-board-reviews'] = { data: { status: 'detached', reviews: [], manual: [], message: 'detached HEAD' } }
+  const node = h.render(h.api.ReviewLinks, { repo: reviewRepo })
+  assert.match(text(node), /无法推断来源分支/)
+  assert.match(text(node), /手工关联均需/)
+  assert.equal(nodes(node).find(n => n.props.children === '添加链接').props.disabled, true)
+  assert.doesNotMatch(text(node), /请求失败/)
+ })
+
+test('unsupported review remote explains configuration instead of branch switching', () => {
+ const h = harness()
+ h.results['dev-board-reviews'] = { data: { status: 'unsupported_source', branch: 'feat/exact', message: 'unsupported remote' } }
+ const node = h.render(h.api.ReviewLinks, { repo: reviewRepo })
+ assert.match(text(node), /remote.*不受支持/)
+ assert.doesNotMatch(text(node), /先切换/)
 })

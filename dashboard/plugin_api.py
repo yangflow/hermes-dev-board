@@ -32,6 +32,7 @@ from urllib.parse import quote, urlencode, urlsplit
 from fastapi import APIRouter, HTTPException, Query
 
 router = APIRouter()
+API_VERSION = 2
 
 _review_cache = OrderedDict()
 _review_cache_lock = threading.Lock()
@@ -224,7 +225,15 @@ def _manual_read() -> dict:
 
 @router.get("/reviews")
 def review_links(dir: str = Query(...), force: bool = False) -> dict:
-    host, repo, branch = _review_source(_review_dir(dir))
+    d = _review_dir(dir)
+    try:
+        host, repo, branch = _review_source(d)
+    except HTTPException as exc:
+        if exc.status_code != 409:
+            raise
+        branch = _run(["git", "branch", "--show-current"], d)
+        return {"status": "unsupported_source" if branch else "detached",
+                "reviews": [], "manual": [], "branch": branch or None, "message": exc.detail}
     provider = _review_hosts().get(host)
     key = (provider, host, repo, branch)
     with _review_cache_lock:
@@ -363,7 +372,7 @@ def board() -> dict:
                 "last": _run(["git", "log", "-1", "--format=%h %s"], d),
             }
         )
-    return {"tasks": [{"id": k, "repos": v} for k, v in sorted(tasks.items(), reverse=True)], "editor_name": _editor_name()}
+    return {"api_version": API_VERSION, "tasks": [{"id": k, "repos": v} for k, v in sorted(tasks.items(), reverse=True)], "editor_name": _editor_name()}
 
 
 def _model_config(raw) -> dict:
@@ -505,7 +514,13 @@ def open_editor(task: str = Query(...)) -> dict:
         home = Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))).expanduser()
         cache = home / "cache" / "dev-board" / "workspaces"
         cache.mkdir(parents=True, exist_ok=True)
-        workspace = cache / ("Task-" + quote(task, safe="") + ".code-workspace")
+        labels = sorted({s["label"] for s in task_sessions()["zt_sessions"].get(task, [])
+                         if s.get("label", "").endswith("-" + task)})
+        prefix = labels[0][:-len(task) - 1] if labels else "Task"
+        # Encode each component separately so prefix/task boundaries stay unambiguous.
+        prefix = quote(prefix, safe="").replace("-", "%2D")
+        identity = quote(task, safe="").replace("-", "%2D")
+        workspace = cache / (prefix + "-" + identity + ".code-workspace")
         workspace.write_text(json.dumps({"folders": [{"name": d.name, "path": str(d.resolve())} for d in dirs]}, indent=2) + "\n")
         targets = [str(workspace)]
         editor = os.environ.get("DEV_BOARD_EDITOR") or ("Visual Studio Code" if sys.platform == "darwin" else "code")

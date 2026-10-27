@@ -104,8 +104,17 @@ class ReviewLinksTests(unittest.TestCase):
         subprocess.run(['git', 'config', 'remote.pushDefault', 'origin'], cwd=repo, check=True)
         subprocess.run(['git', 'config', 'branch.feat/exact.pushRemote', 'publish'], cwd=repo, check=True)
         self.assertEqual(api._review_source(repo), ('git.example', 'team/other', 'feat/exact'))
+        with patch.object(api, '_review_remote', return_value=None):
+            unsupported = self.get(repo).json()
+        self.assertEqual(unsupported['status'], 'unsupported_source')
+        self.assertEqual(unsupported['branch'], 'feat/exact')
         subprocess.run(['git', 'checkout', '--detach', '-q'], cwd=repo, check=True)
-        self.assertEqual(self.get(repo).status_code, 409)
+        result = self.get(repo)
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()['status'], 'detached')
+        self.assertEqual(result.json()['reviews'], [])
+        self.assertEqual(result.json()['manual'], [])
+        self.assertEqual(self.post(repo).status_code, 409)
 
     def test_github_exact_results_states_drafts_sort_dedupe_and_commands(self):
         rows = [github(2, state='closed'), github(1, draft=True), github(3, state='closed', merged_at='2026-01-01'),
