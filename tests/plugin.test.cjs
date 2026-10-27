@@ -15,7 +15,8 @@ function atom(value) {
 }
 
 function harness() {
-  const notices = [], calls = [], queries = [], registrations = []
+  const notices = [], calls = [], queries = [], registrations = [], cleanups = []
+  const workspaces = new Map()
   const state = {
     focusedStoredSessionId: atom('stored'), focusedSessionId: atom('runtime'),
     focusedSessionProfile: atom('dev'), profile: atom('default')
@@ -35,7 +36,7 @@ function harness() {
     },
     async openSession(id, options) { calls.push(['session', id, options]) },
     navigate(route) { calls.push(['navigate', route]) },
-    openWorkspace(id, options) { calls.push(['dock', id, options]) }
+    openWorkspace(id, options) { calls.push(['dock', id, options]); workspaces.set(id, options); return () => workspaces.delete(id) }
   }
   const slots = []
   let cursor = 0, pending = [], dirty = false
@@ -76,7 +77,8 @@ function harness() {
     .replace(/^import .*\n/gm, '').replace('export default {', 'globalThis.plugin = {')
   vm.runInContext(source + '\nglobalThis.api = { useActiveZt, DockPanel, TaskCard, SessionChip, BoardPage, ReviewLinks, useReviews, openReview };', context)
   const h = {
-    api: context.api, state, session, host, notices, calls, queries, results, registrations,
+    api: context.api, state, session, host, notices, calls, queries, results, registrations, workspaces,
+    unload() { cleanups.forEach((fn) => fn()) },
     rest: async (url, options) => {
       calls.push(['rest', url, options])
       return url === '/zt_sessions' ? results['dev-board-sessions'].data : { ok: true }
@@ -93,7 +95,7 @@ function harness() {
     },
     dispose() { slots.forEach((slot) => slot?.cleanup?.()) }
   }
-  context.plugin.register({ os: { openExternal: async (url) => { calls.push(['external', url]); return true } }, rest: (...args) => h.rest(...args), register: (entry) => registrations.push(entry) })
+  context.plugin.register({ onDispose: (fn) => cleanups.push(fn), os: { openExternal: async (url) => { calls.push(['external', url]); return true } }, rest: (...args) => h.rest(...args), register: (entry) => registrations.push(entry) })
   return h
 }
 
@@ -332,7 +334,7 @@ test('external open failures, false SDK results and credential/scheme URLs surfa
     ROUTES_AREA: 'routes', SIDEBAR_NAV_AREA: 'nav', PALETTE_AREA: 'palette' })
   vm.runInContext(source + '\nglobalThis.openReview = openReview', context)
   for (const openExternal of [async () => false, async () => { throw new Error('OS rejected') }]) {
-    context.plugin.register({ rest() {}, os: { openExternal }, register() {} })
+    context.plugin.register({ onDispose() {}, rest() {}, os: { openExternal }, register() {} })
     await context.openReview('https://host/review')
     assert.equal(notices.at(-1).kind, 'error')
   }
@@ -424,4 +426,60 @@ test('task title, configured launcher and compact review identity', async () => 
   const panel = h.render(h.api.ReviewLinks, { repo: reviewRepo, showRepo: false })
   assert.doesNotMatch(text(panel), /github.com|feat\/exact|host is not configured|代码审阅 · api/)
   assert.match(text(panel), /未配置自动查询/)
+})
+
+
+test('unload removes retained workspace render; registration never opens and fresh plugin can reopen', async () => {
+  const h = harness()
+  assert.equal(h.workspaces.size, 0)
+  const open = h.registrations.find((r) => r.id === 'open-dock').data.run
+  await open()
+  assert.equal(h.workspaces.get('worktree').render().type, h.api.DockPanel)
+  h.unload()
+  assert.equal(h.workspaces.size, 0)
+  await open()
+  assert.equal(h.workspaces.size, 0)
+  const fresh = harness()
+  assert.equal(fresh.workspaces.size, 0)
+  await fresh.registrations.find((r) => r.id === 'open-dock').data.run()
+  assert.equal(fresh.workspaces.get('worktree').render().type, fresh.api.DockPanel)
+})
+
+test('dock headings, compact identities, clean wording and editor metadata', async () => {
+  const h = harness()
+  h.results['dev-board'].data.editor_name = 'Cursor'
+  h.results['dev-board'].data.tasks[0].repos = [reviewRepo, { ...reviewRepo, repo: 'web', dir: '/web' }]
+  const panel = h.render(h.api.DockPanel)
+  assert.match(text(panel), /ZT-1234 task/)
+  assert.match(text(panel), /文件变更.*无未提交变更.*PR\/MR/)
+  assert.deepEqual(nodes(panel).filter((n) => n.type === h.api.ReviewLinks).map((n) => [n.props.repo.repo, n.props.compact]), [['api', true], ['web', true]])
+  await button(panel, '在 Cursor 打开')()
+  assert.equal(h.calls.at(-1)[1], '/open_editor?task=1234')
+})
+
+test('unload during session activation cannot resurrect the pane', async () => {
+  const h = harness()
+  let finish
+  h.host.openSession = () => new Promise((resolve) => { finish = resolve })
+  const opening = button(h.render(h.api.BoardPage), '在会话右侧打开')()
+  await Promise.resolve()
+  h.unload()
+  finish()
+  await opening
+  assert.equal(h.workspaces.size, 0)
+})
+
+test('all repositories retain identical file paths as distinct selectable identities', () => {
+  const h = harness()
+  h.results['dev-board-task-changes'].data.files = ['api', 'web'].map((repo) => ({
+    repo, dir: '/worktrees/' + repo, path: 'same.py', status: 'M', added: 1, removed: 0
+  }))
+  const panel = h.render(h.api.DockPanel)
+  const rows = nodes(panel).filter((n) => n.props.row?.type === 'file')
+  assert.equal(rows.length, 2)
+  assert.notEqual(rows[0].key, rows[1].key)
+  assert.deepEqual(rows.map((n) => n.props.row.path), ['same.py', 'same.py'])
+  rows[1].props.onPick()
+  h.render(h.api.DockPanel)
+  assert.deepEqual(plain(h.queries.findLast((q) => q.queryKey[0] === 'dev-board-diff').queryKey), ['dev-board-diff', '/worktrees/web', 'same.py'])
 })

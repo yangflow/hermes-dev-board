@@ -63,6 +63,28 @@ class ReviewLinksTests(unittest.TestCase):
             with patch.dict(os.environ, {'DEV_BOARD_REVIEW_HOSTS': raw}), self.assertRaises(api.HTTPException):
                 api._review_hosts()
 
+    def test_live_settings_updates_precedence_and_safe_errors(self):
+        settings = self.home / 'dev-board/settings.json'
+        settings.parent.mkdir(parents=True)
+        repo = self.source(remote='https://git.example/team/repo.git')
+        with patch.dict(os.environ, {'DEV_BOARD_REVIEW_HOSTS': '{}'}), patch.object(api, '_query_reviews', return_value={'status': 'empty', 'reviews': []}) as query:
+            self.assertEqual(self.get(repo).json()['status'], 'unsupported')
+            settings.write_text(json.dumps({'review_hosts': {'git.example': 'gitlab'}}))
+            self.assertEqual(self.get(repo).json()['status'], 'empty')
+            self.assertEqual(query.call_args.args[0], 'gitlab')
+            settings.write_text(json.dumps({'review_hosts': {'git.example': 'github'}}))
+            self.get(repo)
+            self.assertEqual(query.call_args.args[0], 'github')
+            with patch.dict(os.environ, {'DEV_BOARD_REVIEW_HOSTS': '{"git.example":"gitlab"}'}):
+                self.assertEqual(api._review_hosts()['git.example'], 'gitlab')
+            self.assertEqual(api._review_hosts()['github.com'], 'github')
+            for raw in ['[]', '{', '{"secret":"TOPSECRET"}', '{"review_hosts":[]}', '{"review_hosts":{"host":"invalid"}}']:
+                settings.write_text(raw)
+                result = self.get(repo)
+                self.assertEqual(result.status_code, 500)
+                self.assertIn('settings.json', result.text)
+                self.assertNotIn('TOPSECRET', result.text)
+
     def test_source_remote_precedence_exact_branch_no_task_guess_and_no_credentials(self):
         repo = self.source(remote='https://alice:TOPSECRET@github.com/team/repo.git')
         self.assertEqual(api._review_source(repo), ('github.com', 'team/repo', 'feat/exact'))

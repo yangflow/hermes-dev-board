@@ -80,7 +80,19 @@ The button names the configured launcher; success means the launch command compl
 
 ## Code review links
 
-Set these on the gateway process, then restart it (examples only; no token configuration):
+Prefer `$HERMES_HOME/dev-board/settings.json` (default `~/.hermes/dev-board/settings.json`):
+
+```json
+{"review_hosts":{"gitlab.com":"gitlab","git.example.com":"gitlab"}}
+```
+
+The optional file is read on every review request: edit it and refresh reviews without restarting the gateway.
+Only the optional `review_hosts` key is accepted; its value must map domains to `github` or `gitlab`.
+Invalid JSON, schema or unreadable files produce visible errors without exposing contents.
+`github.com` remains enabled by default; `DEV_BOARD_REVIEW_HOSTS` overrides file entries per domain.
+Environment variables must be set on the running gateway process (restart required); `.env` is not read by this plugin.
+Examples only; no token configuration:
+
 
 ```bash
 export DEV_BOARD_REVIEW_HOSTS='{"github.com":"github","gitlab.com":"gitlab","git.example.com":"gitlab","github.example.com":"github"}'

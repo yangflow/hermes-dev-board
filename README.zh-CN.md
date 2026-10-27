@@ -68,7 +68,17 @@ macOS 应用名或 `.app` 路径通过 `open -a` 打开，其他命令保留参�
 
 ### 代码审阅链接
 
-在网关进程启动前设置，修改后重启网关。以下是完整格式示例，不需要配置 token：
+推荐使用 `$HERMES_HOME/dev-board/settings.json`（默认 `~/.hermes/dev-board/settings.json`）：
+
+```json
+{"review_hosts":{"gitlab.com":"gitlab","git.example.com":"gitlab"}}
+```
+
+该可选文件在每次审阅请求时读取；修改后点击刷新审阅即可，无需重启网关。
+文件仅接受可选的 `review_hosts` 字段，值必须为域名到 `github` 或 `gitlab` 的映射。
+JSON、结构或文件读取错误会明确显示，不输出文件内容。默认仍启用 `github.com`；
+`DEV_BOARD_REVIEW_HOSTS` 按域名覆盖文件配置。环境变量必须进入实际运行的网关进程，修改需重启；
+插件不会读取 `.env`。以下仅为格式示例，不需要配置 token：
 
 ```bash
 export DEV_BOARD_REVIEW_HOSTS='{"github.com":"github","gitlab.com":"gitlab","git.example.com":"gitlab","github.example.com":"github"}'
