@@ -535,3 +535,49 @@ test('unsupported review remote explains configuration instead of branch switchi
  assert.match(text(node), /remote.*不受支持/)
  assert.doesNotMatch(text(node), /先切换/)
 })
+
+test('empty dock keeps repository selection, one clean message and a single full task title', () => {
+  const h = harness()
+  h.results['dev-board'].data.tasks[0].repos = [reviewRepo]
+  h.results['dev-board-task-changes'].data.repos = [{ ...reviewRepo, dirty: 0 }]
+  let panel = h.render(h.api.DockPanel)
+  assert.equal(nodes(panel).filter(n => n.props.title === h.session.title).length, 1)
+  assert.equal(text(panel).split(h.session.title).length - 1, 1)
+  assert.doesNotMatch(text(panel), /0 文件|0 变更|api（0）/)
+  assert.equal(text(panel).split('无未提交变更').length - 1, 1)
+  const selects = nodes(panel).filter(n => n.type === 'Select')
+  selects[1].props.onValueChange('api')
+  panel = h.render(h.api.DockPanel)
+  assert.equal(nodes(panel).filter(n => n.type === 'Select')[1].props.value, 'api')
+  assert.equal(nodes(panel).find(n => n.type === h.api.ReviewLinks).props.repo.repo, 'api')
+  nodes(panel).find(n => n.type === 'Select').props.onValueChange('1234')
+  assert.equal(nodes(h.render(h.api.DockPanel)).find(n => n.type === 'Select').props.value, '1234')
+})
+
+test('compact review counts require success and accessible actions preserve refresh and form errors', async () => {
+  for (const status of [undefined, 'unsupported', 'unavailable', 'detached', 'unsupported_source', 'error', 'timeout', 'partial']) {
+    const h = harness()
+    h.results['dev-board-reviews'] = { data: { status } }
+    const panel = h.render(h.api.ReviewLinks, { repo: reviewRepo, compact: true })
+    assert.doesNotMatch(text(panel), /0 ·/)
+    assert.equal(nodes(panel).find(n => n.props.className === 'db-review-name').props.children, 'api')
+  }
+  const h = harness()
+  h.results['dev-board-reviews'] = { data: { status: 'empty' }, refetch: () => h.queries.at(-1).queryFn() }
+  const render = () => h.render(h.api.ReviewLinks, { repo: reviewRepo, compact: true })
+  let panel = render()
+  assert.match(text(panel), /0 · 无关联审阅/)
+  const action = label => nodes(panel).find(n => n.props['aria-label'] === label)
+  assert.equal(action('刷新 api 审阅').props.title, '刷新 api 审阅')
+  action('刷新 api 审阅').props.onClick()
+  assert.match(h.calls.at(-1)[1], /force=true/)
+  action('为 api 添加链接').props.onClick()
+  panel = render()
+  nodes(panel).find(n => n.type === 'input').props.onChange({ target: { value: 'https://host/review' } })
+  panel = render()
+  h.rest = async () => { throw new Error('write refused') }
+  await nodes(panel).find(n => n.type === 'form').props.onSubmit({ preventDefault() {} })
+  panel = render()
+  assert.equal(nodes(panel).find(n => n.props.role === 'alert').props.children, 'write refused')
+  assert.ok(nodes(panel).some(n => n.type === 'form'))
+})

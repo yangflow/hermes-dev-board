@@ -50,6 +50,21 @@ const boardStyles = `
 .dev-board .db-dock-toolbar button { min-width:0; max-width:100%; }
 .dev-board .db-dock-review { padding:8px; border-top:1px solid var(--ui-stroke-secondary); }
 .dev-board .db-dock-review .db-review { border:0; margin:0; padding:0; }
+
+.dev-board.db-dock .db-task-selector, .dev-board.db-dock .db-dock-toolbar { padding:8px 12px; }
+.dev-board.db-dock .db-task-selector { border-bottom:0; padding-bottom:0; }
+.dev-board.db-dock .db-dock-toolbar .db-title { flex:1 1 0; font-size:12px; }
+.dev-board.db-dock .db-dock-toolbar > button { flex-shrink:0; }
+.dev-board.db-dock .db-dock-toolbar > button[role="combobox"] { flex:1 1 100%; width:100%; }
+.dev-board.db-dock .db-dock-content { min-width:0; padding:0 12px 12px; }
+.dev-board.db-dock .db-section { margin:8px 0 4px; }
+.dev-board.db-dock .db-dock-review { padding:8px 0; }
+.dev-board.db-dock .db-review-head { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:4px; }
+.dev-board.db-dock .db-review-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; }
+.dev-board.db-dock .db-review-status { grid-column:1 / -1; grid-row:2; color:var(--ui-text-tertiary); }
+.dev-board.db-dock .db-review-action { width:26px; height:26px; padding:0; }
+.dev-board.db-dock .db-clean { padding:4px 0; color:var(--ui-text-tertiary); }
+
 `
 const boardStyle = () => jsx('style', { children: boardStyles })
 
@@ -117,10 +132,15 @@ function ReviewLinks({ repo, showRepo = true, compact = false }) {
     title: compact ? repo.repo + ' · ' + (repo.branch || '(detached)') : undefined,
     onClick: (event) => event.stopPropagation(), children: [
       jsxs('div', { className: 'db-review-head', children: [
-        jsx('span', { children: (compact ? '' : '代码审阅 · ') + (showRepo ? repo.repo + ' · ' : '') + (query.isLoading ? '加载中…' : query.isError ? '请求失败' :
-          (reviews.length + manual.length) + ' · ' + (status[data?.status] || '等待加载')) }),
-        jsx(Button, { variant: 'ghost', size: 'sm', disabled: query.isFetching, onClick: query.refresh, children: '刷新审阅' }),
-        jsx(Button, { variant: 'ghost', size: 'sm', disabled: needsBranch, onClick: () => setAdding(!adding), children: '添加链接' })
+        compact && showRepo ? jsx('span', { className: 'db-review-name', title: repo.repo, children: repo.repo }) : null,
+        jsx('span', { className: compact ? 'db-review-status' : undefined, children: (compact ? '' : '代码审阅 · ' + (showRepo ? repo.repo + ' · ' : '')) + (query.isLoading ? '加载中…' : query.isError ? '请求失败' :
+          (!compact || ['ok', 'empty'].includes(data?.status) ? (reviews.length + manual.length) + ' · ' : '') + (status[data?.status] || '等待加载')) }),
+        jsx(Button, { variant: 'ghost', size: 'sm', className: compact ? 'db-review-action' : undefined,
+          title: compact ? '刷新 ' + repo.repo + ' 审阅' : undefined, 'aria-label': compact ? '刷新 ' + repo.repo + ' 审阅' : undefined,
+          disabled: query.isFetching, onClick: query.refresh, children: compact ? '↻' : '刷新审阅' }),
+        jsx(Button, { variant: 'ghost', size: 'sm', className: compact ? 'db-review-action' : undefined,
+          title: compact ? '为 ' + repo.repo + ' 添加链接' : undefined, 'aria-label': compact ? '为 ' + repo.repo + ' 添加链接' : undefined,
+          disabled: needsBranch, onClick: () => setAdding(!adding), children: compact ? '+' : '添加链接' })
       ]}),
       query.isError ? jsx('div', { role: 'alert', children: query.error?.message || '审阅请求失败' }) : null,
       data?.message && !['ok', 'empty', 'unsupported', 'unavailable', 'timeout', 'partial'].includes(data.status) ? jsx('div', { children: message }) : null,
@@ -422,11 +442,11 @@ function DockPanel() {
       jsx(SelectTrigger, { className: 'h-7 text-xs w-full', children: jsx(SelectValue, { placeholder: '选择任务' }) }),
       jsx(SelectContent, { children: [
         jsx(SelectItem, { value: 'auto', children: '跟随当前会话' }),
-        ...(board.data?.tasks || []).map((t) => jsx(SelectItem, { value: t.id, children: (sessions.data?.zt_sessions?.[t.id] || [])[0]?.title || taskPrefix(t.id, sessions.data?.zt_sessions) }, t.id))
+        ...(board.data?.tasks || []).map((t) => jsx(SelectItem, { value: t.id, children: taskPrefix(t.id, sessions.data?.zt_sessions) }, t.id))
       ]})
     ]
   }) })
-  const panel = (content) => jsxs('div', { className: 'dev-board h-full flex flex-col min-h-0', children: [boardStyle(), taskSelector, content] })
+  const panel = (content) => jsxs('div', { className: 'dev-board db-dock h-full flex flex-col min-h-0', children: [boardStyle(), taskSelector, content] })
   const state = (title, description) => panel(jsx(EmptyState, { title, description }))
   if (board.isLoading || (selectedTask === 'auto' && sessions.isLoading)) return state('加载任务和会话…')
   if (board.isError) return state('任务加载失败', board.error?.message)
@@ -461,7 +481,7 @@ function DockPanel() {
   }
   walk(tree.root, 0, '')
 
-  return jsxs('div', { className: 'dev-board h-full flex flex-col min-h-0', children: [
+  return jsxs('div', { className: 'dev-board db-dock h-full flex flex-col min-h-0', children: [
     boardStyle(), taskSelector,
     jsxs('div', { className: 'db-dock-toolbar', children: [
       jsx('span', { className: 'db-title', title: taskTitle, children: taskTitle }),
@@ -472,15 +492,15 @@ function DockPanel() {
         children: [
           jsx(SelectTrigger, { className: 'h-6 text-xs w-[9.5rem]', children: jsx(SelectValue, {}) }),
           jsx(SelectContent, { children: [
-            jsx(SelectItem, { value: 'all', children: '全部（' + (tc.data?.files || []).length + ' 变更）' }),
-            ...repos.map((r) => jsx(SelectItem, { value: r.repo, children: r.repo + '（' + r.dirty + '）' }, r.repo))
+            jsx(SelectItem, { value: 'all', children: (tc.data?.files || []).length ? '全部（' + tc.data.files.length + ' 变更）' : '全部仓库' }),
+            ...repos.map((r) => jsx(SelectItem, { value: r.repo, children: r.repo + (r.dirty ? '（' + r.dirty + '）' : '') }, r.repo))
           ]})
         ]
       }),
-      jsxs('span', { className: 'ml-auto text-[0.625rem] text-(--ui-text-tertiary)', children: [files.length + ' 文件'] })
+      files.length ? jsx('span', { className: 'db-meta', children: files.length + ' 文件' }) : null
     ]}),
     jsx(ScrollArea, { className: 'flex-1 min-h-0', children:
-      jsxs('div', { className: 'flex flex-col gap-0.5 p-1', children: [
+      jsxs('div', { className: 'db-dock-content flex flex-col gap-0.5', children: [
         jsx('h3', { className: 'db-section', children: '文件变更' }),
         ...rows.map((row) => row.type === 'dir'
           ? jsx(TreeRow, {
@@ -493,7 +513,7 @@ function DockPanel() {
               onPick: () => setPicked({ dir: row.dir, path: row.path, repo: row.repo }),
               pickedKey: null
             }, row.key)),
-        !rows.length ? jsx('div', { className: 'text-xs text-(--ui-text-tertiary) px-2 py-1', children: '无未提交变更' }) : null,
+        !rows.length ? jsx('div', { className: 'db-clean', children: '无未提交变更' }) : null,
         jsx('h3', { className: 'db-section', children: 'PR/MR' }),
         ...task.repos.filter((r) => repoFilter === 'all' || r.repo === repoFilter).map((r) => jsx('div', { className: 'db-dock-review', children: jsx(ReviewLinks, { repo: r, compact: true }) }, r.dir))
       ]})
