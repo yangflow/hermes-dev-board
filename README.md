@@ -1,5 +1,7 @@
 # Hermes Dev Board
 
+**English** | [简体中文](README.zh-CN.md)
+
 A cross-repo worktree board for the [Hermes Agent](https://hermes-agent.nousresearch.com) desktop app.
 It groups git worktrees by **task id** — one feature spanning several repositories shows up as one card
 with every repo, branch, last commit and pending-change count — and links the board to your **chat
@@ -7,6 +9,8 @@ sessions**, so the panel beside your conversation always shows the worktrees, ch
 side-by-side diffs of the task you are currently talking about.
 
 ![board](docs/board.png)
+
+> Illustrative mockup with fictional tasks, repositories, branches and code; no private project data is included.
 
 ## What you get
 
