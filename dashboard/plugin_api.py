@@ -14,8 +14,12 @@ All knobs are environment variables (set them on the gateway process):
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
+import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -42,7 +46,7 @@ _TITLE_RE = re.compile(os.environ.get("DEV_BOARD_TITLE_RE", r"([A-Za-z]+-\d{2,6}
 def _run(args: list[str], cwd: Path | None = None, timeout: int = 15) -> str:
     try:
         out = subprocess.run(args, cwd=str(cwd) if cwd else None, capture_output=True, text=True, timeout=timeout)
-        return out.stdout.strip() if out.returncode == 0 else ""
+        return out.stdout.rstrip("\r\n") if out.returncode == 0 else ""
     except Exception:
         return ""
 
@@ -96,6 +100,14 @@ def board() -> dict:
     return {"tasks": [{"id": k, "repos": v} for k, v in sorted(tasks.items(), reverse=True)]}
 
 
+def _model_config(raw) -> dict:
+    try:
+        config = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return config if isinstance(config, dict) else {}
+
+
 @router.get("/zt_sessions")
 def task_sessions() -> dict:
     """Task number -> sessions whose title carries a matching id, across profile stores."""
@@ -105,19 +117,43 @@ def task_sessions() -> dict:
     for db in _session_dbs():
         try:
             con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-            for sid, title in con.execute(
-                "select id, title from sessions"
-                " where title is not null and coalesce(hidden,0)=0 and coalesce(archived,0)=0"
-                " order by last_activity_at desc"
-            ):
+            con.row_factory = sqlite3.Row
+            rows = list(con.execute("select id, title, source, model_config, parent_session_id, end_reason,"
+                                    " hidden, archived from sessions order by last_activity_at desc"))
+            con.close()
+            by_id = {row["id"]: row for row in rows}
+            profile = db.parent.name if db.parent.parent.name == "profiles" else "default"
+            lineages = {}
+            for row in rows:
+                if row["hidden"] or row["archived"] or row["source"] == "subagent":
+                    continue
+                config = _model_config(row["model_config"])
+                if config.get("_delegate_from") or re.match(r"^\s*Subagent\s*:", row["title"] or "", re.I):
+                    continue
+                chain = [row]
+                child = row
+                while child["parent_session_id"] in by_id:
+                    parent = by_id[child["parent_session_id"]]
+                    config = _model_config(child["model_config"])
+                    if (parent["end_reason"] != "compression" or child["source"] == "tool" or parent["id"] in {r["id"] for r in chain}
+                            or any(config.get(k) == parent["id"] for k in ("_branched_from", "_delegate_from", "_reset_from"))):
+                        break
+                    chain.append(parent)
+                    child = parent
+                title = next((r["title"] for r in chain if r["title"]), "")
                 m = _TITLE_RE.search(title or "")
                 if not m:
                     continue
                 full = m.group(1)
                 num = re.search(r"(\d+)$", full)
                 if num:
-                    out.setdefault(num.group(1), []).append({"id": sid, "title": title, "label": full})
-            con.close()
+                    root = chain[-1]["id"]
+                    entry = {"id": row["id"], "title": title, "label": full, "profile": profile,
+                             "session_ids": [r["id"] for r in chain]}
+                    if root not in lineages or len(chain) > len(lineages[root][1]["session_ids"]):
+                        lineages[root] = (num.group(1), entry)
+            for num, entry in lineages.values():
+                out.setdefault(num, []).append(entry)
         except Exception:
             continue
     return {"zt_sessions": out}
@@ -193,22 +229,30 @@ def diff(dir: str = Query(...), file: str = Query(...)) -> dict:
     return {"diff": text[:120000]}
 
 
-@router.get("/open_editor")
+@router.post("/open_editor")
 def open_editor(task: str = Query(...)) -> dict:
     """Open all of a task's worktrees in the editor as a multi-root window."""
     dirs = [d for d, zt, _ in _task_worktrees() if zt == task]
     if not dirs:
         raise HTTPException(status_code=404, detail="no worktrees for task")
-    roots = _roots()
-    code_root = roots[0].parent if roots else Path.home()
-    ws = [str(w) for w in code_root.glob(f"*{task}*.code-workspace")]
-    targets = ws or [str(d) for d in dirs]
-    editor = os.environ.get("DEV_BOARD_EDITOR")
-    if not editor:
-        editor = "Visual Studio Code" if sys.platform == "darwin" else "code"
-    cmd = ["open", "-a", editor] + targets if sys.platform == "darwin" and editor != "code" else [editor] + targets
     try:
-        subprocess.Popen(cmd)
+        home = Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))).expanduser()
+        cache = home / "cache" / "dev-board" / "workspaces"
+        cache.mkdir(parents=True, exist_ok=True)
+        workspace = cache / (hashlib.sha256(task.encode()).hexdigest() + ".code-workspace")
+        workspace.write_text(json.dumps({"folders": [{"name": d.name, "path": str(d.resolve())} for d in dirs]}, indent=2) + "\n")
+        targets = [str(workspace)]
+        editor = os.environ.get("DEV_BOARD_EDITOR") or ("Visual Studio Code" if sys.platform == "darwin" else "code")
+        cmd = shlex.split(editor)
+        if sys.platform == "darwin" and (editor == "Visual Studio Code" or editor.endswith(".app")
+                                         or len(cmd) == 1 and not shutil.which(cmd[0])):
+            cmd = ["open", "-a", cmd[0] if len(cmd) == 1 else editor]
+        cmd += targets
+        subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=15)
         return {"ok": True, "opened": targets}
-    except Exception as exc:
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="editor command timed out after 15 seconds")
+    except subprocess.CalledProcessError as exc:
+        raise HTTPException(status_code=500, detail=(exc.stderr or exc.stdout or f"editor exited with code {exc.returncode}").strip())
+    except (OSError, ValueError) as exc:
         raise HTTPException(status_code=500, detail=str(exc))

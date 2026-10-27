@@ -4,9 +4,7 @@
 
 面向 [Hermes Agent](https://hermes-agent.nousresearch.com) Desktop 的跨仓库 worktree 插件。按任务编号聚合多个仓库，在主会话聊天窗口右侧查看当前任务的变更目录树与文件对比。
 
-![Dev Board 脱敏界面示意图](docs/board.png)
-
-> 界面示意图使用虚构的任务、仓库、分支与代码，不包含真实项目数据；布局用于展示功能。
+> 界面截图将在实际插件运行验证后补充。
 
 ## 功能
 
