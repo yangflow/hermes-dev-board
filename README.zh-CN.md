@@ -14,7 +14,7 @@
 - **变更目录树**：折叠目录、压缩单链目录、显示文件及目录的增删行数。
 - **文件对比**：点击变更文件，左右对照旧版和新版，显示行号与新增、删除底色。
 - **代码审阅**：全局仓库行和聊天侧栏均显示 PR/MR 数量、标题、目标分支、状态和草稿，支持手工链接与刷新。
-- **编辑器入口**：将任务对应的 worktree 传给配置的编辑器。
+- **编辑器入口**：默认在 VS Code 中打开任务的多目录工作区，可配置兼容的启动命令。
 
 当前目录树展示的是未提交的变更文件；对比以 HEAD 为基准。文件对比尚无语法高亮。看板每 15 秒刷新，其他视图刷新行为以当前实现为准。
 
@@ -57,6 +57,14 @@ plugins:
 | `DEV_BOARD_SESSION_DBS` | `$HERMES_HOME/state.db` 及其 `profiles/*/state.db` | 冒号分隔的会话数据库路径 |
 | `DEV_BOARD_REVIEW_HOSTS` | `{"github.com":"github"}` | JSON：域名 → `github` 或 `gitlab`，其他域名需显式配置 |
 | `DEV_BOARD_EDITOR` | macOS 为 `Visual Studio Code`，其他系统为 `code` | 打开工作目录的编辑器 |
+
+
+打开时会在 `$HERMES_HOME/cache/dev-board/workspaces` 生成 VS Code 格式的
+`Task-9246.code-workspace` 文件，仅包含该任务实际发现的目录。这些本地缓存含绝对路径，不应提交。
+`DEV_BOARD_EDITOR` 只替换启动命令（支持 shell 风格引号，不执行 shell 展开），不会改变工作区格式；
+应使用 `code`、`cursor` 等支持此格式的启动程序，并非任意编辑器均可使用。
+macOS 应用名或 `.app` 路径通过 `open -a` 打开，其他命令保留参数。
+按钮显示配置的启动程序名称；成功提示表示启动命令执行完成。
 
 ### 代码审阅链接
 
