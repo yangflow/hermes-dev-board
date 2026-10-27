@@ -9,15 +9,15 @@ import { useEffect, useMemo, useState } from 'react'
 import { Badge, Button, EmptyState, ScrollArea, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, StatusDot } from '@hermes/plugin-sdk'
 
 
-// Task label prefix comes from the matched session label (e.g. ZT-9248 -> 'ZT-'), else '#'.
-let lastPrefixSeen = null
-function taskPrefix(id) {
-  return lastPrefixSeen ?? '#'
+function taskPrefix(id, map = {}) {
+  const list = map[id] || []
+  const profile = host.state.focusedSessionProfile?.get() || host.state.profile?.get() || 'default'
+  return (list.find((s) => s.profile === profile) || list[0])?.label || '#' + id
 }
 
 const REFRESH_MS = 15000
 let boardFetch = null
-const rest = (path) => boardFetch(path)
+const rest = (path, options) => boardFetch(path, options)
 
 function useBoard() {
   return useQuery({ queryKey: ['dev-board'], queryFn: () => rest('/board'), refetchInterval: REFRESH_MS })
@@ -32,25 +32,52 @@ function useDiff(dir, file) {
   return useQuery({ queryKey: ['dev-board-diff', dir, file], queryFn: () => rest('/diff?dir=' + encodeURIComponent(dir) + '&file=' + encodeURIComponent(file)), enabled: !!(dir && file) })
 }
 
-// Focused session -> its ZT task id
+function activeTask(map) {
+  const sid = host.state.focusedStoredSessionId?.get() || host.state.focusedSessionId?.get()
+  const profile = host.state.focusedSessionProfile?.get() || host.state.profile?.get() || 'default'
+  if (!sid) return null
+  for (const [id, list] of Object.entries(map)) {
+    const session = list.find((s) => (s.profile || 'default') === profile && (s.id === sid || s.session_ids?.includes(sid)))
+    if (session) return { id, session }
+  }
+  return null
+}
+
 function useActiveZt() {
   const sessions = useSessions()
-  const [zt, setZt] = useState(null)
+  const [active, setActive] = useState(null)
   useEffect(() => {
-    const atom = host.state.focusedSessionId
-    if (!atom || typeof atom.subscribe !== 'function') return
-    const compute = (sid) => {
-      const map = sessions.data?.zt_sessions || {}
-      for (const [k, list] of Object.entries(map)) {
-        const hit = list.find((s) => s.id === sid)
-        if (hit) { lastPrefixSeen = (hit.label || '').replace(/-?\d+$/, '-') || '#'; return setZt(k) }
-      }
-      setZt(null)
-    }
-    compute(atom.get && atom.get())
-    return atom.subscribe((sid) => compute(sid))
+    const compute = () => setActive(activeTask(sessions.data?.zt_sessions || {}))
+    const atoms = [host.state.focusedStoredSessionId, host.state.focusedSessionId, host.state.focusedSessionProfile, host.state.profile]
+    compute()
+    const dispose = atoms.filter((atom) => atom?.subscribe).map((atom) => atom.subscribe(compute))
+    return () => dispose.forEach((fn) => fn())
   }, [sessions.data])
-  return zt
+  return { ...sessions, active }
+}
+
+async function openDock(map) {
+  try {
+    const active = activeTask(map || (await rest('/zt_sessions')).zt_sessions || {})
+    if (active) await host.openSession(active.session.id, { profile: active.session.profile || 'default' })
+    else host.navigate('/')
+    await host.openWorkspace('worktree', {
+      dock: { pane: 'workspace', pos: 'right' }, title: 'Worktree', minWidth: '24rem',
+      render: () => jsx(DockPanel, {})
+    })
+  } catch (error) {
+    host.notify({ kind: 'error', message: '打开会话侧栏失败：' + (error.message || String(error)) })
+  }
+}
+
+async function openEditor(task) {
+  try {
+    const result = await rest('/open_editor?task=' + encodeURIComponent(task), { method: 'POST', timeoutMs: 20000 })
+    if (!result.ok) throw new Error(result.detail || '编辑器命令未成功完成')
+    host.notify({ kind: 'success', message: '编辑器打开命令已完成' })
+  } catch (error) {
+    host.notify({ kind: 'error', message: '打开编辑器失败：' + (error.message || String(error)) })
+  }
 }
 
 const statusVariant = (s) => (s.startsWith('?') ? 'warning' : s.startsWith('D') ? 'destructive' : s.startsWith('A') ? 'success' : 'secondary')
@@ -243,7 +270,9 @@ function FileCompare({ dir, file, diff }) {
 
 function DockPanel() {
   const board = useBoard()
-  const activeZt = useActiveZt()
+  const sessions = useActiveZt()
+  const [selectedTask, setSelectedTask] = useState('auto')
+  const activeZt = selectedTask === 'auto' ? sessions.active?.id : selectedTask
   const [repoFilter, setRepoFilter] = useState('all')
   const [expanded, setExpanded] = useState(() => new Set())
   const [picked, setPicked] = useState(null) // {dir, path, repo}
@@ -254,21 +283,37 @@ function DockPanel() {
     enabled: !!activeZt
   })
   const fileDiff = useDiff(picked?.dir, picked?.path)
-  useEffect(() => { setExpanded(new Set()); setPicked(null) }, [activeZt])
+  useEffect(() => { setExpanded(new Set()); setPicked(null); setRepoFilter('all') }, [activeZt])
   useEffect(() => {
     const back = () => setPicked(null)
     window.addEventListener('dev-board-back', back)
     return () => window.removeEventListener('dev-board-back', back)
   }, [])
-  if (!activeZt) return jsx(EmptyState, { title: '当前会话无任务编号', hint: '会话标题需含任务编号（可配置）' })
-  if (board.isLoading || tc.isLoading) return jsx(EmptyState, { title: '加载…' })
-  if (!task) return jsx(EmptyState, { title: taskPrefix(activeZt) + ' 无活跃 worktree' })
+  const taskSelector = jsx('div', { className: 'px-2 py-1.5 border-b border-(--ui-stroke-secondary)', children: jsx(Select, {
+    value: selectedTask, onValueChange: setSelectedTask,
+    children: [
+      jsx(SelectTrigger, { className: 'h-7 text-xs w-full', children: jsx(SelectValue, { placeholder: '选择任务' }) }),
+      jsx(SelectContent, { children: [
+        jsx(SelectItem, { value: 'auto', children: '跟随当前会话' }),
+        ...(board.data?.tasks || []).map((t) => jsx(SelectItem, { value: t.id, children: taskPrefix(t.id, sessions.data?.zt_sessions) }, t.id))
+      ]})
+    ]
+  }) })
+  const panel = (content) => jsxs('div', { className: 'h-full flex flex-col min-h-0', children: [taskSelector, content] })
+  const state = (title, description) => panel(jsx(EmptyState, { title, description }))
+  if (board.isLoading || (selectedTask === 'auto' && sessions.isLoading)) return state('加载任务和会话…')
+  if (board.isError) return state('任务加载失败', board.error?.message)
+  if (selectedTask === 'auto' && sessions.isError) return state('会话映射加载失败', (sessions.error?.message || '') + '；可手动选择任务')
+  if (!activeZt) return state('当前会话未匹配任务', '请从上方手动选择任务，或打开含任务编号的会话')
+  if (!task) return state(taskPrefix(activeZt, sessions.data?.zt_sessions) + ' 无活跃 worktree', '可从上方选择其他任务')
+  if (tc.isLoading) return state('加载任务变更…')
+  if (tc.isError) return state('任务变更加载失败', tc.error?.message)
   const files = (tc.data?.files || []).filter((f) => repoFilter === 'all' || f.repo === repoFilter)
   const repos = tc.data?.repos || []
 
   // file picked → file compare view
   if (picked) {
-    return jsx(FileCompare, { dir: picked.dir, file: picked.repo + ' · ' + picked.path, diff: fileDiff.data?.diff })
+    return panel(jsx(FileCompare, { dir: picked.dir, file: picked.repo + ' · ' + picked.path, diff: fileDiff.data?.diff }))
   }
 
   // tree rows
@@ -289,8 +334,9 @@ function DockPanel() {
   walk(tree.root, 0, '')
 
   return jsxs('div', { className: 'h-full flex flex-col min-h-0', children: [
+    taskSelector,
     jsxs('div', { className: 'flex items-center gap-2 px-2 py-1.5 border-b border-(--ui-stroke-secondary) flex-wrap', children: [
-      jsx('span', { className: 'font-semibold text-sm', children: taskPrefix(activeZt) }),
+      jsx('span', { className: 'font-semibold text-sm', children: taskPrefix(activeZt, sessions.data?.zt_sessions) }),
       jsx(Select, {
         value: repoFilter,
         onValueChange: (v) => { setRepoFilter(v); setExpanded(new Set()) },
@@ -327,7 +373,10 @@ function DockPanel() {
 function SessionChip({ s }) {
   return jsx('button', {
     className: 'rounded-full border border-(--ui-stroke-secondary) px-2 py-0.5 text-xs hover:bg-(--chrome-action-hover) truncate max-w-[14rem]',
-    title: s.title, onClick: () => host.openSession(s.id), children: s.title
+    title: s.title, onClick: async () => {
+      try { await host.openSession(s.id, { profile: s.profile || 'default' }) }
+      catch (error) { host.notify({ kind: 'error', message: '打开会话失败：' + (error.message || String(error)) }) }
+    }, children: s.title
   })
 }
 
@@ -339,14 +388,14 @@ function TaskCard({ task, activeZt, onPickRepo, pickedDir }) {
     className: cn('rounded-lg border bg-transparent', isActive ? 'border-(--accent)' : 'border-(--ui-stroke-secondary)'),
     children: [
       jsxs('div', { className: 'flex items-center gap-2 px-3 py-2 border-b border-(--ui-stroke-secondary) flex-wrap', children: [
-        jsx('span', { className: 'font-semibold', children: taskPrefix(task.id) }),
+        jsx('span', { className: 'font-semibold', children: taskPrefix(task.id, sessions.data?.zt_sessions) }),
         jsx(Badge, { variant: 'secondary', children: task.repos.length + ' 仓' }),
         isActive ? jsx(Badge, { variant: 'success', children: '当前会话' }) : null,
-        chips.length ? jsx('div', { className: 'flex gap-1 flex-wrap', children: chips.map((s) => jsx(SessionChip, { s, key: s.id })) }) : null,
+        chips.length ? jsx('div', { className: 'flex gap-1 flex-wrap', children: chips.map((s) => jsx(SessionChip, { s }, (s.profile || 'default') + ':' + s.id)) }) : null,
         jsxs('div', { className: 'ml-auto flex gap-1', children: [
           jsx(Button, {
             variant: 'ghost', size: 'sm',
-            onClick: () => rest('/open_editor?task=' + task.id).then((r) => host.notify({ kind: 'info', message: r.ok ? '已在编辑器打开' : '打开失败' })),
+            onClick: () => openEditor(task.id),
             children: '编辑器'
           })
         ]})
@@ -368,19 +417,20 @@ function TaskCard({ task, activeZt, onPickRepo, pickedDir }) {
 
 function BoardPage() {
   const board = useBoard()
-  const activeZt = useActiveZt()
+  const sessions = useActiveZt()
+  const activeZt = sessions.active?.id
   const [pickedDir, setPickedDir] = useState(null)
   if (board.isLoading) return jsx(EmptyState, { title: '加载 worktree…' })
-  if (board.isError) return jsx(EmptyState, { title: '后端不可用', hint: '需重启 Desktop 加载新端点' })
+  if (board.isError) return jsx(EmptyState, { title: '后端不可用', description: board.error?.message })
   const tasks = board.data?.tasks || []
   const sorted = activeZt ? [...tasks.filter((t) => t.id === activeZt), ...tasks.filter((t) => t.id !== activeZt)] : tasks
   return jsxs(ScrollArea, { className: 'h-full', children: [
     jsxs('div', { className: 'flex flex-col gap-2 p-3', children: [
       jsxs('div', { className: 'flex items-center gap-2 text-(--ui-text-tertiary) text-xs', children: [
-        jsx('span', { children: tasks.length + ' 个任务' + (activeZt ? ' · 当前 ' + taskPrefix(activeZt) : '') }),
+        jsx('span', { children: tasks.length + ' 个任务' + (activeZt ? ' · 当前 ' + taskPrefix(activeZt, sessions.data?.zt_sessions) : '') }),
         jsx(Button, {
           variant: 'secondary', size: 'sm',
-          onClick: () => host.openWorkspace('worktree', { dock: { pane: 'workspace', pos: 'right', enforce: true }, title: 'Worktree', minWidth: '24rem', render: () => jsx(DockPanel, {}) }),
+          onClick: () => openDock(sessions.data?.zt_sessions || {}),
           children: '在会话右侧打开'
         }),
         jsx(Button, { variant: 'ghost', size: 'sm', onClick: () => board.refetch(), children: '刷新' })
@@ -395,7 +445,7 @@ export default {
   name: 'Dev Board',
   description: 'Cross-repo worktree board linked to the current session, with a chat-side dock panel.',
   register(ctx) {
-    boardFetch = (path) => ctx.rest(path)
+    boardFetch = (path, options) => ctx.rest(path, options)
     ctx.register({ id: 'page', area: ROUTES_AREA, data: { path: '/dev-board' }, render: () => jsx(BoardPage, {}) })
     ctx.register({ id: 'nav', area: SIDEBAR_NAV_AREA, data: { path: '/dev-board', label: 'Dev Board', codicon: 'git-branch' } })
     ctx.register({ id: 'open', area: PALETTE_AREA, data: { id: 'dev-board-open', label: 'Dev Board：打开跨仓开发板', run: () => host.navigate('/dev-board') } })
@@ -405,10 +455,7 @@ export default {
       data: {
         id: 'dev-board-worktree',
         label: 'Dev Board：会话右侧 Worktree 面板',
-        run: () => host.openWorkspace('worktree', {
-          dock: { pane: 'workspace', pos: 'right', enforce: true }, title: 'Worktree', minWidth: '24rem',
-          render: () => jsx(DockPanel, {})
-        })
+        run: () => openDock()
       }
     })
   }

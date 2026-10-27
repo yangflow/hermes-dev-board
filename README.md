@@ -8,9 +8,7 @@ with every repo, branch, last commit and pending-change count — and links the 
 sessions**, so the panel beside your conversation always shows the worktrees, changed-file tree and
 side-by-side diffs of the task you are currently talking about.
 
-![board](docs/board.png)
-
-> Illustrative mockup with fictional tasks, repositories, branches and code; no private project data is included.
+> Screenshots will be added after verification against the running plugin.
 
 ## What you get
 
