@@ -44,7 +44,7 @@ function harness() {
     return { type, props: props || {}, key }
   }
   const context = vm.createContext({
-    host, jsx, jsxs: jsx, cn: (...args) => args.filter(Boolean).join(' '),
+    URL, host, jsx, jsxs: jsx, cn: (...args) => args.filter(Boolean).join(' '),
     useState(initial) {
       const i = cursor++
       if (!slots[i]) slots[i] = { value: typeof initial === 'function' ? initial() : initial }
@@ -52,6 +52,11 @@ function harness() {
         next = typeof next === 'function' ? next(slots[i].value) : next
         if (!Object.is(next, slots[i].value)) { slots[i].value = next; dirty = true }
       }]
+    },
+    useRef(initial) {
+      const i = cursor++
+      if (!slots[i]) slots[i] = { current: initial }
+      return slots[i]
     },
     useEffect(fn, deps) {
       const i = cursor++, previous = slots[i]
@@ -69,7 +74,7 @@ function harness() {
   })
   const source = fs.readFileSync(path.join(__dirname, '../desktop/plugin.js'), 'utf8')
     .replace(/^import .*\n/gm, '').replace('export default {', 'globalThis.plugin = {')
-  vm.runInContext(source + '\nglobalThis.api = { useActiveZt, DockPanel, TaskCard, SessionChip, BoardPage };', context)
+  vm.runInContext(source + '\nglobalThis.api = { useActiveZt, DockPanel, TaskCard, SessionChip, BoardPage, ReviewLinks, useReviews, openReview };', context)
   const h = {
     api: context.api, state, session, host, notices, calls, queries, results, registrations,
     rest: async (url, options) => {
@@ -88,7 +93,7 @@ function harness() {
     },
     dispose() { slots.forEach((slot) => slot?.cleanup?.()) }
   }
-  context.plugin.register({ rest: (...args) => h.rest(...args), register: (entry) => registrations.push(entry) })
+  context.plugin.register({ os: { openExternal: async (url) => { calls.push(['external', url]); return true } }, rest: (...args) => h.rest(...args), register: (entry) => registrations.push(entry) })
   return h
 }
 
@@ -257,4 +262,153 @@ test('board and task-change request errors render explicit errors, never clean s
   h.results['dev-board'] = { isError: true, error: new Error('board offline') }
   panel = h.render(h.api.DockPanel)
   assert.ok(nodes(panel).some((n) => n.props.title === '任务加载失败' && n.props.description === 'board offline'))
+})
+
+const reviewRepo = { repo: 'api', dir: '/worktrees/api-1234', branch: 'feat/exact' }
+const reviewData = { status: 'ok', repository: 'github.com/team/repo', branch: 'feat/exact', reviews: [
+  { provider: 'github', number: 7, title: 'Fix request', url: 'https://github.com/team/repo/pull/7', target_branch: 'main', state: 'merged', draft: true },
+  { provider: 'gitlab', number: 8, title: 'Next request', url: 'https://git.example/team/repo/-/merge_requests/8', target_branch: 'release', state: 'closed', draft: false }
+], manual: ['https://review.example/manual'] }
+
+test('review refresh forces exactly one request and keeps the shared worktree/branch query key stable', async () => {
+  const h = harness()
+  h.results['dev-board-reviews'] = { refetch: () => h.queries.at(-1).queryFn() }
+  const render = () => h.render(() => h.api.useReviews(reviewRepo.dir, reviewRepo.branch))
+  const query = render()
+  let options = h.queries.at(-1)
+  const key = plain(options.queryKey)
+  assert.deepEqual(key, ['dev-board-reviews', reviewRepo.dir, reviewRepo.branch])
+  assert.equal(options.staleTime, 60000)
+  assert.equal(options.refetchInterval, 60000)
+  assert.equal(options.retry, false)
+  await options.queryFn()
+  assert.deepEqual(plain(h.calls.at(-1)), ['rest', '/reviews?dir=%2Fworktrees%2Fapi-1234', { timeoutMs: 20000 }])
+  for (let refresh = 0; refresh < 2; refresh++) {
+    const before = h.calls.length
+    query.refresh()
+    assert.equal(h.calls.length, before + 1, 'refresh starts its request immediately')
+    assert.equal(h.calls.at(-1)[1], '/reviews?dir=%2Fworktrees%2Fapi-1234&force=true')
+    render()
+    options = h.queries.at(-1)
+    assert.deepEqual(plain(options.queryKey), key)
+    for (let interval = 0; interval < 2; interval++) {
+      await options.queryFn()
+      assert.equal(h.calls.at(-1)[1], '/reviews?dir=%2Fworktrees%2Fapi-1234')
+    }
+  }
+  assert.equal(h.calls.filter((call) => call[1].includes('&force=true')).length, 2)
+  const other = harness()
+  other.render(() => other.api.useReviews(reviewRepo.dir, reviewRepo.branch))
+  assert.deepEqual(plain(other.queries.at(-1).queryKey), key)
+  h.rest = async () => { throw new Error('review offline') }
+  await assert.rejects(options.queryFn(), /review offline/)
+})
+
+test('review links show count, number, title, target, state and draft; use ctx.os.openExternal', async () => {
+  const h = harness()
+  h.results['dev-board-reviews'] = { data: reviewData }
+  const panel = h.render(h.api.ReviewLinks, { repo: reviewRepo })
+  assert.match(text(panel), /代码审阅 · api · 3 · 已加载/)
+  assert.match(text(panel), /PR #7 Fix request → main · merged · Draft/)
+  assert.match(text(panel), /MR !8 Next request → release · closed/)
+  await nodes(panel).find((n) => n.type === 'button' && text(n).startsWith('PR #7')).props.onClick()
+  await nodes(panel).find((n) => n.type === 'button' && text(n).startsWith('手工')).props.onClick()
+  assert.deepEqual(plain(h.calls), [['external', reviewData.reviews[0].url], ['external', reviewData.manual[0]]])
+})
+
+test('external open failures, false SDK results and credential/scheme URLs surface errors', async () => {
+  const h = harness()
+  for (const url of ['javascript:alert(1)', 'file:///secret', 'https://user:secret@example.com/review']) {
+    await h.api.openReview(url)
+    assert.match(h.notices.at(-1).message, /无效链接/)
+  }
+  assert.equal(h.calls.length, 0)
+  // Re-register with the actual SDK boolean contract.
+  const source = fs.readFileSync(path.join(__dirname, '../desktop/plugin.js'), 'utf8')
+    .replace(/^import .*\n/gm, '').replace('export default {', 'globalThis.plugin = {')
+  const notices = []
+  const context = vm.createContext({ URL, host: { notify: (n) => notices.push(n) },
+    ROUTES_AREA: 'routes', SIDEBAR_NAV_AREA: 'nav', PALETTE_AREA: 'palette' })
+  vm.runInContext(source + '\nglobalThis.openReview = openReview', context)
+  for (const openExternal of [async () => false, async () => { throw new Error('OS rejected') }]) {
+    context.plugin.register({ rest() {}, os: { openExternal }, register() {} })
+    await context.openReview('https://host/review')
+    assert.equal(notices.at(-1).kind, 'error')
+  }
+  assert.match(notices.at(-1).message, /OS rejected/)
+})
+
+test('review loading, HTTP error, empty, unsupported, unavailable, timeout and partial stay distinct', () => {
+  const cases = [
+    [{ isLoading: true }, /加载中/],
+    [{ isError: true, error: new Error('HTTP 409 detached') }, /请求失败.*HTTP 409 detached/],
+    [{ data: { status: 'empty' } }, /0 · 无关联审阅/],
+    [{ data: { status: 'unsupported' } }, /不支持自动查询/],
+    [{ data: { status: 'unavailable' } }, /CLI 不可用/],
+    [{ data: { status: 'timeout' } }, /查询超时/],
+    [{ data: { status: 'error', message: 'login failed' } }, /查询失败.*login failed/],
+    [{ data: { ...reviewData, status: 'partial', message: 'incomplete' } }, /结果不完整.*incomplete/]
+  ]
+  for (const [result, expected] of cases) {
+    const h = harness()
+    h.results['dev-board-reviews'] = result
+    assert.match(text(h.render(h.api.ReviewLinks, { repo: reviewRepo })), expected)
+  }
+})
+
+test('manual add/remove POST exact options, refresh and failures handled in built-in form', async () => {
+  const h = harness()
+  let refreshes = 0
+  h.results['dev-board-reviews'] = { data: reviewData, refetch: async () => { refreshes++; return h.queries.at(-1).queryFn() } }
+  const render = () => h.render(h.api.ReviewLinks, { repo: reviewRepo })
+  button(render(), '刷新审阅')()
+  assert.equal(h.calls.at(-1)[1], '/reviews?dir=%2Fworktrees%2Fapi-1234&force=true')
+  refreshes = 0
+  await button(render(), '添加链接')()
+  let panel = render()
+  nodes(panel).find((n) => n.type === 'input').props.onChange({ target: { value: 'https://host/review?x=1&y=2' } })
+  panel = render()
+  await nodes(panel).find((n) => n.type === 'form').props.onSubmit({ preventDefault() {} })
+  assert.deepEqual(plain(h.calls.at(-2)), ['rest', '/review_links?dir=%2Fworktrees%2Fapi-1234&action=add&url=https%3A%2F%2Fhost%2Freview%3Fx%3D1%26y%3D2', { method: 'POST', timeoutMs: 20000 }])
+  assert.equal(h.calls.at(-1)[1], '/reviews?dir=%2Fworktrees%2Fapi-1234')
+  assert.equal(refreshes, 1)
+  await button(render(), '移除')()
+  assert.match(h.calls.at(-2)[1], /action=remove/)
+  assert.equal(h.calls.at(-1)[1], '/reviews?dir=%2Fworktrees%2Fapi-1234')
+  assert.equal(refreshes, 2)
+  h.rest = async () => { throw new Error('write refused') }
+  await button(render(), '移除')()
+  assert.match(text(render()), /write refused/)
+  h.rest = async () => ({ ok: false, detail: 'disk full' })
+  await button(render(), '移除')()
+  assert.match(text(render()), /disk full/)
+  h.rest = async () => ({ ok: true })
+  h.results['dev-board-reviews'].refetch = async () => ({ isError: true, error: new Error('refresh failed') })
+  await button(render(), '移除')()
+  assert.match(text(render()), /refresh failed/)
+})
+
+test('board repo rows and dock all/per-repo selection include code reviews without replacing changes', () => {
+  const h = harness()
+  const repos = [reviewRepo, { ...reviewRepo, repo: 'web', dir: '/worktrees/web-1234' }]
+  const task = { id: '1234', repos }
+  let card = h.render(h.api.TaskCard, { task, onPickRepo() {} })
+  assert.equal(nodes(card).filter((n) => n.type === h.api.ReviewLinks).length, 2)
+  const dock = harness()
+  dock.results['dev-board'].data.tasks[0].repos = repos
+  dock.results['dev-board-task-changes'].data.repos = repos
+  dock.results['dev-board-task-changes'].data.files = [{ dir: reviewRepo.dir, repo: 'api', path: 'file.py', status: 'M', added: 1, removed: 1 }]
+  let panel = dock.render(dock.api.DockPanel)
+  assert.equal(nodes(panel).filter((n) => n.type === dock.api.ReviewLinks).length, 2)
+  assert.match(text(panel), /文件/)
+  const selects = nodes(panel).filter((n) => n.type === 'Select')
+  assert.equal(selects[0].props.value, 'auto')
+  selects[1].props.onValueChange('api')
+  panel = dock.render(dock.api.DockPanel)
+  assert.deepEqual(nodes(panel).filter((n) => n.type === dock.api.ReviewLinks).map((n) => n.props.repo.repo), ['api'])
+  const row = nodes(panel).find((n) => typeof n.type === 'function' && n.props.row?.type === 'file')
+  row.props.onPick()
+  panel = dock.render(dock.api.DockPanel)
+  assert.ok(nodes(panel).some((n) => typeof n.type === 'function' && n.type.name === 'FileCompare'))
+  assert.equal(nodes(panel).find((n) => n.type === 'Select').props.value, 'auto')
 })

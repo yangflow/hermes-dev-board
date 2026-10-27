@@ -5,7 +5,7 @@
  */
 import { cn, host, useQuery, ROUTES_AREA, SIDEBAR_NAV_AREA, PALETTE_AREA } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Badge, Button, EmptyState, ScrollArea, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, StatusDot } from '@hermes/plugin-sdk'
 
 
@@ -17,7 +17,82 @@ function taskPrefix(id, map = {}) {
 
 const REFRESH_MS = 15000
 let boardFetch = null
+let openExternal = null
 const rest = (path, options) => boardFetch(path, options)
+
+function useReviews(dir, branch) {
+  const forceRef = useRef(false)
+  const query = useQuery({
+    queryKey: ['dev-board-reviews', dir, branch],
+    queryFn: () => {
+      const force = forceRef.current
+      forceRef.current = false
+      return rest('/reviews?dir=' + encodeURIComponent(dir) + (force ? '&force=true' : ''), { timeoutMs: 20000 })
+    },
+    enabled: !!dir, staleTime: 60000, refetchInterval: 60000, retry: false
+  })
+  return { ...query, refresh: () => { forceRef.current = true; void query.refetch() } }
+}
+
+async function openReview(url) {
+  try {
+    const parsed = new URL(url)
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error('无效链接')
+    if (!await openExternal(url)) throw new Error('系统未打开链接')
+  } catch (error) {
+    host.notify({ kind: 'error', message: '打开代码审阅失败：' + (error.message || String(error)) })
+  }
+}
+
+function ReviewLinks({ repo }) {
+  const query = useReviews(repo.dir, repo.branch)
+  const [adding, setAdding] = useState(false)
+  const [url, setUrl] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const data = query.data
+  const reviews = data?.reviews || []
+  const manual = data?.manual || []
+  const status = { ok: '已加载', empty: '无关联审阅', unsupported: '不支持自动查询（可手工添加）',
+    unavailable: 'CLI 不可用', error: '查询失败', timeout: '查询超时', partial: '结果不完整' }
+  const update = async (action, link) => {
+    setSaving(true); setError('')
+    try {
+      const result = await rest('/review_links?dir=' + encodeURIComponent(repo.dir) + '&action=' + action + '&url=' + encodeURIComponent(link),
+        { method: 'POST', timeoutMs: 20000 })
+      if (!result.ok) throw new Error(result.detail || '保存失败')
+      if (action === 'add') { setUrl(''); setAdding(false) }
+      const refreshed = await query.refetch()
+      if (refreshed?.isError) throw refreshed.error
+    } catch (failure) { setError(failure.message || String(failure)) }
+    finally { setSaving(false) }
+  }
+  return jsxs('div', { className: 'w-full text-xs px-2 py-1 border-b border-(--ui-stroke-secondary) min-w-0',
+    onClick: (event) => event.stopPropagation(), children: [
+      jsxs('div', { className: 'flex items-center gap-1 flex-wrap', children: [
+        jsx('span', { children: '代码审阅 · ' + repo.repo + ' · ' + (query.isLoading ? '加载中…' : query.isError ? '请求失败' :
+          (reviews.length + manual.length) + ' · ' + (status[data?.status] || '等待加载')) }),
+        jsx(Button, { variant: 'ghost', size: 'sm', disabled: query.isFetching, onClick: query.refresh, children: '刷新审阅' }),
+        jsx(Button, { variant: 'ghost', size: 'sm', onClick: () => setAdding(!adding), children: '添加链接' })
+      ]}),
+      query.isError ? jsx('div', { role: 'alert', children: query.error?.message || '审阅请求失败' }) : null,
+      data?.message ? jsx('div', { children: data.message }) : null,
+      data?.branch ? jsx('div', { className: 'break-all text-(--ui-text-tertiary)', children: data.repository + ' · ' + data.branch }) : null,
+      ...reviews.map((r) => jsx('button', { type: 'button', className: 'block text-left break-words hover:underline',
+        onClick: () => openReview(r.url), children: (r.provider === 'gitlab' ? 'MR !' : 'PR #') + r.number + ' ' + r.title +
+          ' → ' + r.target_branch + ' · ' + r.state + (r.draft ? ' · Draft' : '') }, r.provider + ':' + r.number)),
+      ...manual.map((link) => jsxs('div', { className: 'flex gap-1 items-center', children: [
+        jsx('button', { type: 'button', className: 'break-all text-left hover:underline', onClick: () => openReview(link), children: '手工 · ' + link }),
+        jsx(Button, { variant: 'ghost', size: 'sm', disabled: saving, onClick: () => update('remove', link), children: '移除' })
+      ] }, link)),
+      adding ? jsxs('form', { className: 'flex gap-1', onSubmit: (event) => { event.preventDefault(); if (!saving) return update('add', url) }, children: [
+        jsx('input', { type: 'url', required: true, value: url, placeholder: 'https://…', 'aria-label': '代码审阅链接',
+          className: 'min-w-0 flex-1 border rounded px-1', onChange: (event) => setUrl(event.target.value) }),
+        jsx(Button, { type: 'submit', variant: 'secondary', size: 'sm', disabled: saving, children: '保存' })
+      ]}) : null,
+      error ? jsx('div', { role: 'alert', children: error }) : null
+    ] })
+}
 
 function useBoard() {
   return useQuery({ queryKey: ['dev-board'], queryFn: () => rest('/board'), refetchInterval: REFRESH_MS })
@@ -352,6 +427,7 @@ function DockPanel() {
     ]}),
     jsx(ScrollArea, { className: 'flex-1 min-h-0', children:
       jsxs('div', { className: 'flex flex-col gap-0.5 p-1', children: [
+        ...task.repos.filter((r) => repoFilter === 'all' || r.repo === repoFilter).map((r) => jsx(ReviewLinks, { repo: r }, r.dir)),
         ...rows.map((row) => row.type === 'dir'
           ? jsx(TreeRow, {
               row, expanded,
@@ -401,14 +477,15 @@ function TaskCard({ task, activeZt, onPickRepo, pickedDir }) {
         ]})
       ]}),
       jsx('div', { className: 'flex flex-col gap-1 p-2', children: task.repos.map((r) => jsxs('div', {
-        className: cn('flex items-center gap-2 rounded-md border border-(--ui-stroke-secondary) px-2 py-1.5 text-[0.8125rem] hover:bg-(--chrome-action-hover) cursor-pointer', pickedDir === r.dir && 'bg-(--chrome-action-hover)'),
+        className: cn('flex flex-wrap items-center gap-2 rounded-md border border-(--ui-stroke-secondary) px-2 py-1.5 text-[0.8125rem] hover:bg-(--chrome-action-hover) cursor-pointer', pickedDir === r.dir && 'bg-(--chrome-action-hover)'),
         onClick: () => onPickRepo(r),
         children: [
           jsx(StatusDot, { tone: r.dirty > 0 ? 'warn' : 'good' }),
           jsx('span', { className: 'font-medium min-w-[7rem]', children: r.repo }),
           jsx('span', { className: 'text-(--ui-text-tertiary) truncate max-w-[10rem]', children: r.branch || '(detached)' }),
           jsx('span', { className: 'ml-auto text-(--ui-text-tertiary) tabular-nums text-xs whitespace-nowrap', children: r.last || '—' }),
-          r.dirty > 0 ? jsx(Badge, { variant: 'warning', children: r.dirty + ' 未提交' }) : null
+          r.dirty > 0 ? jsx(Badge, { variant: 'warning', children: r.dirty + ' 未提交' }) : null,
+          jsx(ReviewLinks, { repo: r })
         ]
       }, r.dir)) })
     ]
@@ -446,6 +523,7 @@ export default {
   description: 'Cross-repo worktree board linked to the current session, with a chat-side dock panel.',
   register(ctx) {
     boardFetch = (path, options) => ctx.rest(path, options)
+    openExternal = (url) => ctx.os.openExternal(url)
     ctx.register({ id: 'page', area: ROUTES_AREA, data: { path: '/dev-board' }, render: () => jsx(BoardPage, {}) })
     ctx.register({ id: 'nav', area: SIDEBAR_NAV_AREA, data: { path: '/dev-board', label: 'Dev Board', codicon: 'git-branch' } })
     ctx.register({ id: 'open', area: PALETTE_AREA, data: { id: 'dev-board-open', label: 'Dev Board：打开跨仓开发板', run: () => host.navigate('/dev-board') } })
