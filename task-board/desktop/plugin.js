@@ -169,7 +169,7 @@ async function startTaskSession(task, update, doingStatus = 'doing') {
       if (!gateway) throw new Error('网关不可用')
       // The gateway's titled create persists the title and resolves an existing exact-title session.
       const title = taskSessionTitle(task)
-      const created = await gateway.request('session.create', { title })
+      const created = await gateway.request('session.create', { title, profile })
       if (!created?.stored_session_id) throw new Error('网关未返回会话 ID')
       link = { session_id: created.stored_session_id, session_profile: profile, session_title: title }
       launchedTasks.set(key, link)
