@@ -63,6 +63,7 @@ const taskBoardStyles = `.tb-root { --tb-space:calc(.25rem * var(--spacing-mul, 
 .tb-root .tb-task-row[draggable="true"] { cursor:grab; }
 .tb-root .tb-task-row.tb-dragging { opacity:.45; }
 .tb-root .tb-task-row button { min-width:0; }
+.tb-root .tb-card-top > :not(.tb-task-title) { flex-shrink:0; }
 .tb-root .tb-task-title { flex:1; min-width:0; overflow-wrap:anywhere; font-weight:600; font-size:14px; padding:0; border:0; background:transparent; color:var(--ui-text-primary); text-align:left; }
 .tb-root .tb-task-title:hover { color:var(--ui-accent); }
 .tb-root .tb-task-note { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; white-space:pre-wrap; overflow-wrap:anywhere; color:var(--ui-text-secondary); margin:calc(var(--tb-space) * 3) 0; }
@@ -81,10 +82,11 @@ const taskBoardStyles = `.tb-root { --tb-space:calc(.25rem * var(--spacing-mul, 
 .tb-root .tb-empty { display:flex; flex:1; flex-direction:column; align-items:center; justify-content:center; gap:calc(var(--tb-space) * 2); text-align:center; padding:calc(var(--tb-space) * 6) calc(var(--tb-space) * 2); color:var(--ui-text-secondary); }
 .tb-root .tb-empty-icon { display:grid; place-items:center; width:40px; height:40px; margin-bottom:calc(var(--tb-space) * 2); border:1px dashed var(--ui-stroke-secondary); border-radius:var(--radius-md); color:var(--ui-accent); font-size:22px; }
 .tb-root .tb-empty p { font-size:11px; }
-.tb-root .tb-task-list .tb-task-row { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr) 4em minmax(220px,1fr) auto; grid-template-areas:"title labels status actions menu"; align-items:center; gap:calc(var(--tb-space) * 3); }
+.tb-root .tb-task-list .tb-task-row { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr) 4em minmax(220px,1fr) auto auto; grid-template-areas:"title labels status actions menu source"; align-items:center; gap:calc(var(--tb-space) * 3); }
 .tb-root .tb-task-list .tb-card-top { display:contents; }
 .tb-root .tb-task-list .tb-task-title { grid-area:title; }
 .tb-root .tb-task-list .tb-more { grid-area:menu; }
+.tb-root .tb-task-list .tb-source { grid-area:source; }
 .tb-root .tb-task-list .tb-labels { grid-area:labels; }
 .tb-root .tb-task-list .tb-list-status { grid-area:status; }
 .tb-root .tb-task-list .tb-task-note { display:none; }
@@ -118,7 +120,7 @@ const taskBoardStyles = `.tb-root { --tb-space:calc(.25rem * var(--spacing-mul, 
   .tb-root .tb-tasks { padding:calc(var(--tb-space) * 4); gap:calc(var(--tb-space) * 4); }
   .tb-root .tb-task-columns { grid-template-columns:1fr; }
   .tb-root .tb-task-zone { min-height:220px; }
-  .tb-root .tb-task-list .tb-task-row { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"title menu" "labels labels" "status status" "actions actions"; }
+  .tb-root .tb-task-list .tb-task-row { grid-template-columns:minmax(0,1fr) auto auto; grid-template-areas:"title menu source" "labels labels labels" "status status status" "actions actions actions"; }
 }
 `
 const taskBoardStyle = () => jsx('style', { children: taskBoardStyles })
@@ -223,7 +225,7 @@ function TasksPage() {
   const sourceAction = task => task.url ? action('打开原地址', event => {
     event.stopPropagation()
     return run(async () => { if (!await openExternal(task.url)) throw new Error('系统未打开链接') })
-  }, { title: '打开原地址：' + task.url, children: jsxs('span', { children: [jsx(Codicon, { name: 'link-external', size: 14, 'aria-hidden': true }), '打开原地址'] }) }) : null
+  }, { className: 'tb-source', title: '打开原地址：' + task.url, children: jsx(Codicon, { name: 'link-external', size: 14, 'aria-hidden': true }) }) : null
   const menuAction = (label, onClick, extra = {}) => jsx(DropdownMenuItem, { asChild: true, disabled: busy, children: action(label, onClick, extra) })
   const renderTask = task => jsxs('div', {
           className: cn('tb-task-row', dragging === task.id && 'tb-dragging'), draggable: !busy,
@@ -241,15 +243,14 @@ function TasksPage() {
             menuAction(task.pinned ? '取消置顶' : '置顶', () => run(() => update(task, { pinned: !task.pinned }))),
             menuAction(taskStatus[task.status], () => run(() => update(task, { status: { todo: 'doing', doing: 'done', done: 'todo' }[task.status] })), { 'aria-label': '切换状态 ' + task.title }),
             ...[['↑', 'up'], ['↓', 'down']].map(([label, direction]) => menuAction(label, () => run(() => rest('/tasks/' + task.id + '/reorder', { method: 'POST', body: { direction } })), { 'aria-label': (direction === 'up' ? '上移 ' : '下移 ') + task.title }))
-          ] })] })] }),
+          ] })] }), sourceAction(task)] }),
           task.note ? jsx('div', { className: 'tb-task-note', children: task.note }) : null,
           jsxs('div', { className: 'tb-labels', children: [
-            task.ref || task.url ? (task.url ? action(task.ref || '链接', () => run(async () => { if (!await openExternal(task.url)) throw new Error('系统未打开链接') }), { className: 'tb-task-id' }) : jsx(Badge, { className: 'tb-task-id', children: task.ref })) : null,
+            task.ref ? jsx(Badge, { className: 'tb-task-id', children: task.ref }) : null,
             ...(task.labels || []).map(name => jsx('span', { children: labelChip(name, definitions[name]) }, name))
           ] }),
           view === 'list' ? jsx('span', { className: 'tb-list-status', children: taskStatus[task.status] }) : null,
           jsxs('div', { className: 'tb-card-foot', children: [
-            sourceAction(task),
             task.status === 'todo' ? action('▷ 开始任务', () => run(() => startTaskSession(task, body => update(task, body)))) : task.status === 'doing' ? action('✓ 标记完成', () => run(() => update(task, { status: 'done' }))) : action('↶ 重新打开', () => run(() => update(task, { status: 'todo' }))),
             task.status !== 'todo' && (task.session_id || launchedTasks.has(taskLaunchKey(task))) ? action('打开会话', () => run(async () => { const link = launchedTasks.get(taskLaunchKey(task)) || task; await host.openSession(link.session_id, { profile: link.session_profile }) })) : null,
             jsx('time', { dateTime: task.updated_at || task.created_at, children: relativeTime(task.updated_at || task.created_at) })
@@ -309,7 +310,7 @@ function TasksPage() {
         selected.note ? jsx('p', { className: 'tb-detail-note', children: selected.note }) : null,
         jsx('div', { className: 'tb-labels', children: (selected.labels || []).map(name => labelChip(name, definitions[name])) }),
         jsx('select', { 'aria-label': '更新任务状态', disabled: busy, value: selected.status, onChange: event => run(() => update(selected, { status: event.target.value })), children: Object.entries(taskStatus).map(([value, label]) => jsx('option', { value, children: label }, value)) }),
-        jsxs('div', { className: 'tb-dialog-actions', children: [sourceAction(selected), action('关闭', () => setSelectedId(null)), action('编辑任务', () => { setSelectedId(null); edit(selected) }, { variant: 'outline' })] })
+        jsxs('div', { className: 'tb-dialog-actions', children: [action('关闭', () => setSelectedId(null)), action('编辑任务', () => { setSelectedId(null); edit(selected) }, { variant: 'outline' })] })
       ] }) : null }),
       jsx(Dialog, { open: !!deleting, onOpenChange: open => { if (!open && !busyRef.current) setDeleting(null) }, children: deleting ? jsxs(DialogContent, { className: 'tb-root tb-dialog', banner: failure?.message, onCloseAutoFocus: restoreFocus, children: [
         jsxs(DialogHeader, { children: [jsx(DialogTitle, { children: '删除任务' }), jsx(DialogDescription, { children: '确定删除「' + deleting.title + '」？关联会话会保留。' })] }),
