@@ -137,6 +137,35 @@ file replacement; unreadable/corrupt data is reported without overwriting it. Li
 the desktop SDK's `ctx.os.openExternal`; failures are displayed. The task selector and changed-file
 view continue to work alongside reviews.
 
+## Task list
+
+Open **任务清单** beside Dev Board in the sidebar, or run **Dev Board：任务清单**
+from the command palette (`/tasks`). This is a simple TODO list: create/edit a required title,
+optional ticket ID, note and Zentao URL; cycle status through todo → doing → done → todo,
+delete, pin, or move rows up/down within their pinned/unpinned group. Pinned tasks appear first.
+The All / Todo / Doing / Done tabs and search (title, ID and note) filter locally.
+Zentao links open in the system browser; no ticket fetching or cron ingestion occurs.
+
+**开始会话** creates a real session on the current gateway profile using the supported
+`session.create({title})` RPC, then opens it with `host.openSession`. Unlike `host.newChat`,
+which only opens an untitled draft, titled creation persists the session title before opening.
+The task stores its session ID/profile and becomes doing after opening succeeds; subsequent
+clicks offer **打开会话** and reuse that session. Completing/deleting a task does not delete its chat.
+Editing a task does not rename its linked session.
+
+Session titles are `PREFIX-id title`: a ticket ID such as `GH-1234` is preserved, a numeric
+ID such as `1234` becomes `ZT-1234`, and other/absent IDs use `Task-<local task id>`.
+This follows the default `DEV_BOARD_TITLE_RE`; the numeric part links to worktrees with the
+same task suffix on Dev Board. Custom title regexes must also match these generated labels.
+No worktree is created automatically.
+
+Canonical data lives in `$HERMES_HOME/dev-board/tasks.json`, owned by the gateway backend,
+not desktop storage. CRUD and reorder use `ctx.rest` and the plugin's FastAPI routes
+(`GET/POST /tasks`, `PATCH/DELETE /tasks/{id}`, `POST /tasks/{id}/reorder` with
+`{"direction":"up"}` or `{"direction":"down"}`). Writes use a lock, fsync and atomic replacement;
+invalid/unreadable storage is reported rather than overwritten. The file retains task fields,
+creation/update timestamps, order, pin state and session linkage across restarts.
+
 ## How it maps tasks
 
 - A **worktree** belongs to task *N* when its directory name matches `DEV_BOARD_TASK_RE`

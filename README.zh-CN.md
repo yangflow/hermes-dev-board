@@ -150,3 +150,27 @@ export DEV_BOARD_TITLE_RE='(\d{2,6})'
 ## 许可证
 
 [MIT](LICENSE)，版权归 yangflow 所有。
+
+## 任务清单
+
+从 Dev Board 相邻的侧边栏入口 **任务清单**，或命令面板 **Dev Board：任务清单**
+打开 `/tasks`。这是简单 TODO 清单：标题必填，禅道/任务 ID、备注、禅道 URL 可选；
+点击状态按待办 → 进行中 → 已完成 → 待办切换，支持编辑、删除、置顶及上下移动。
+置顶任务优先显示，上下移动限定在各自置顶/普通组内。全部/待办/进行中/已完成筛选和
+标题、ID、备注搜索均在客户端执行。禅道链接通过系统浏览器打开，不抓取禅道，不接入 cron。
+
+**开始会话** 使用当前网关 profile 的 `session.create({title})` RPC 创建真实会话，
+该接口会在打开前持久化标题，再调用 `host.openSession` 打开。`host.newChat` 仅创建草稿，
+不提供所需的标题与会话 ID。任务保存会话 ID/profile，打开成功后标记进行中；后续按钮变为
+**打开会话**，复用已有会话。完成或删除任务不会删除聊天，编辑任务不会重命名关联会话。
+
+会话标题为 `PREFIX-id 标题`：`GH-1234` 等格式原样保留，纯数字 `1234` 转为 `ZT-1234`，
+其他或空 ID 使用 `Task-<本地任务编号>`。它符合默认 `DEV_BOARD_TITLE_RE`，数字部分与
+Dev Board 的 worktree 目录任务号后缀关联；自定义标题正则也需匹配生成的标签。
+任务清单不会自动创建 worktree。
+
+权威数据由网关后端保存在 `$HERMES_HOME/dev-board/tasks.json`，不使用桌面 storage。
+前端通过 `ctx.rest` 调用 FastAPI：`GET/POST /tasks`、`PATCH/DELETE /tasks/{id}`，
+以及 `POST /tasks/{id}/reorder`（`{"direction":"up"}` 或 `{"direction":"down"}`）。
+文件保存任务内容、创建/更新时间、顺序、置顶和会话关联，重启后保留；写入使用锁、fsync
+和原子替换，损坏或不可读的数据会报错，不覆盖原文件。
