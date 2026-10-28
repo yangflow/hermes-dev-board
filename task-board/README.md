@@ -34,10 +34,12 @@ No worktree is created automatically.
 
 The Hermes-themed UI shares header styling and toolbar sizing with Dev Board. Create/edit tasks in a dialog, click a task title for details and status changes, confirm deletion, and reopen completed tasks. Label management uses a separate dialog. Both boards open from their own sidebar entries; task storage remains separate.
 
+Drag cards or list rows before/after another task in the same status and pinned segment. Filters retain hidden tasks; cross-column drops only change status.
+
 Canonical data lives in `$HERMES_HOME/task-board/tasks.json`, owned by the gateway backend,
 not desktop storage. CRUD and reorder use `ctx.rest` and the plugin's FastAPI routes
 (`GET/POST /tasks`, `PATCH/DELETE /tasks/{id}`, `POST /tasks/{id}/reorder` with
-`{"direction":"up"}` or `{"direction":"down"}`). Writes use a lock, fsync and atomic replacement;
+`{"target_id":"10","placement":"before"}` (or `"after"`); legacy `{"direction":"up"}` / `{"direction":"down"}` remain supported). Writes use a lock, fsync and atomic replacement;
 invalid/unreadable storage is reported rather than overwritten. The file retains task fields,
 creation/update timestamps, order, pin state and session linkage across restarts.
 

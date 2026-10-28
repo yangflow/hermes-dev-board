@@ -29,9 +29,11 @@ cp -r task-board/dashboard ~/.hermes/plugins/task-board/
 
 界面沿用 Hermes 主题：统一页头、等高工具栏、三列看板和列表。新建/编辑使用弹窗；点击任务标题查看详情和更新状态；删除需确认，已完成任务可重新打开。标签管理为独立弹窗。两个面板分别通过侧边栏入口打开，不共享任务存储。
 
+拖动卡片或列表行可在同状态、同置顶分段内前后排序；筛选隐藏的任务仍会保留。跨列拖动仅改变状态，不改变置顶。
+
 权威数据由网关后端保存在 `$HERMES_HOME/task-board/tasks.json`，不使用桌面 storage。
 前端通过 `ctx.rest` 调用 FastAPI：`GET/POST /tasks`、`PATCH/DELETE /tasks/{id}`，
-以及 `POST /tasks/{id}/reorder`（`{"direction":"up"}` 或 `{"direction":"down"}`）。
+以及 `POST /tasks/{id}/reorder`（`{"target_id":"10","placement":"before"}` 或 `"after"`，兼容原有 `direction: up/down`）。
 文件保存任务内容、创建/更新时间、顺序、置顶和会话关联，重启后保留；写入使用锁、fsync
 和原子替换，损坏或不可读的数据会报错，不覆盖原文件。
 
