@@ -173,7 +173,7 @@ test('task start creates real titled session on current gateway, then reuses sav
   assert.equal(saved.session_profile, 'default') // active gateway, not focused chat's dev profile
   assert.equal(h.calls.at(-1)[2].body.status, 'doing')
   assert.deepEqual(plain(h.calls.find(c => c[0] === 'session')), ['session', 'stored-task', { profile: 'default' }])
-  await button(h.renderTasks(), '打开会话')()
+  await button(h.renderTasks(), '▷ 开始任务')()
   assert.equal(h.calls.filter(c => c[1] === 'session.create').length, 1)
   const other = tasksHarness([{ ...todoTask, session_id: 'existing', session_profile: 'work' }])
   await button(other.renderTasks(), '打开会话')()
@@ -226,9 +226,11 @@ test('task start failures stay visible and retries retain the created identity',
   assert.equal(nodes(h.renderTasks()).find(n => n.props.role === 'alert').props.children, 'save refused')
   assert.equal(h.calls.filter(c => c[0] === 'session').length, 0)
   refuse = false
-  await button(h.renderTasks(), '打开会话')()
+  await button(h.renderTasks(), '▷ 开始任务')()
   assert.equal(h.calls.filter(c => c[1] === 'session.create').length, 1)
   assert.equal(h.calls.find(c => c[0] === 'session')[1], 'stored-task')
+  assert.equal(h.calls.find(c => c[0] === 'rest')[2].body.session_id, 'stored-task')
+  assert.equal(h.calls.at(-1)[2].body.status, 'doing')
   const failed = tasksHarness()
   failed.host.getGateway = () => ({ request: async () => { throw new Error('create failed') } })
   await button(failed.renderTasks(), '▷ 开始任务')()
