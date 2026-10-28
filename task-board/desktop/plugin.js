@@ -1,6 +1,6 @@
 import { cn, host, useQuery, ROUTES_AREA, SIDEBAR_NAV_AREA, PALETTE_AREA, Badge, Button, Codicon, EmptyState, ScrollArea, Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 const labelPalette = { red: 'var(--ui-red)', orange: 'var(--ui-orange)', amber: 'var(--ui-yellow)', green: 'var(--ui-green)', teal: 'var(--ui-cyan)', blue: 'var(--ui-blue)', violet: 'var(--ui-purple)', gray: 'var(--ui-text-tertiary)' }
 const labelChip = (name, color) => jsxs('span', { className: 'tb-label', style: { color: 'var(--ui-text-secondary)' }, children: [jsx('span', { className: 'tb-label-dot', 'aria-hidden': true, style: { backgroundColor: labelPalette[color] || labelPalette.gray } }), name] })
@@ -8,7 +8,7 @@ const labelChip = (name, color) => jsxs('span', { className: 'tb-label', style: 
 let taskStorage = null
 let taskFetch = null
 let openExternal = null
-const API_VERSION = 2 // Bump when the API contract changes.
+const API_VERSION = 3 // Bump when the API contract changes.
 const staleMessage = '后端为旧版本：需重启/重载网关后生效'
 const backendError = (data, error) => data && data.api_version !== API_VERSION || error && (error.status === 404 || error.statusCode === 404 || /^404\b/.test(error.message || '')) ? new Error(staleMessage) : error
 const rest = async (path, options) => {
@@ -51,7 +51,7 @@ const taskBoardStyles = `.tb-root { --tb-space:calc(.25rem * var(--spacing-mul, 
 .tb-root .tb-refresh { width:var(--tb-control-height); height:var(--tb-control-height); padding:0; color:var(--ui-text-secondary); }
 .tb-root .tb-tabs { display:flex; gap:var(--tb-space); }
 .tb-root .tb-tabs [aria-selected="true"] { background:var(--chrome-action-hover); color:var(--ui-text-primary); }
-.tb-root .tb-task-columns { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); align-items:stretch; gap:calc(var(--tb-space) * 5); }
+.tb-root .tb-task-columns { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); align-items:stretch; gap:calc(var(--tb-space) * 5); }
 .tb-root .tb-task-zone { display:flex; flex-direction:column; min-width:0; min-height:420px; padding:calc(var(--tb-space) * 3); border:1px solid transparent; border-radius:var(--radius-lg); background:var(--tb-surface); }
 .tb-root .tb-task-zone.tb-drop-target { border-color:var(--ui-accent); background:color-mix(in srgb, var(--ui-accent) 10%, var(--tb-surface)); }
 .tb-root .tb-column-head, .tb-root .tb-card-top, .tb-root .tb-card-foot { display:flex; align-items:center; gap:calc(var(--tb-space) * 2); min-width:0; }
@@ -128,7 +128,7 @@ const taskBoardStyles = `.tb-root { --tb-space:calc(.25rem * var(--spacing-mul, 
 `
 const taskBoardStyle = () => jsx('style', { children: taskBoardStyles })
 
-const taskStatus = { todo: '待办', doing: '进行中', done: '已完成' }
+const defaultStatuses = [{ id: 'todo', name: '待办', color: 'gray', category: 'todo' }, { id: 'doing', name: '进行中', color: 'blue', category: 'doing' }, { id: 'done', name: '已完成', color: 'green', category: 'done' }]
 const launchedTasks = new Map()
 const startingTasks = new Set()
 
@@ -138,7 +138,7 @@ function taskSessionTitle(task) {
 
 const taskLaunchKey = task => JSON.stringify([host.state.profile.get(), task.id, task.created_at])
 
-async function startTaskSession(task, update) {
+async function startTaskSession(task, update, doingStatus = 'doing') {
   const key = taskLaunchKey(task)
   if (startingTasks.has(key)) return
   startingTasks.add(key)
@@ -157,7 +157,7 @@ async function startTaskSession(task, update) {
     }
     await update({ session_id: link.session_id, session_profile: link.session_profile, session_title: link.session_title || '' })
     await host.openSession(link.session_id, { profile: link.session_profile })
-    await update({ status: 'doing' })
+    await update({ status: doingStatus })
   } finally { startingTasks.delete(key) }
 }
 
@@ -171,8 +171,32 @@ function relativeTime(value) {
 function TasksPage() {
   const query = useQuery({ queryKey: ['task-board-tasks'], queryFn: () => rest('/tasks') })
   const labelsQuery = useQuery({ queryKey: ['task-board-labels'], queryFn: () => rest('/labels') })
+  const statuses = query.data?.statuses || defaultStatuses
+  const taskStatus = Object.fromEntries(statuses.map(s => [s.id, s.name]))
+  const category = id => statuses.find(s => s.id === id)?.category
+  const first = cat => statuses.find(s => s.category === cat)?.id
+  const nextStatus = task => {
+    if (category(task.status) === 'todo') return first('doing')
+    if (category(task.status) === 'done') return first('todo')
+    return statuses.slice(statuses.findIndex(s => s.id === task.status) + 1).find(s => s.category === 'doing' || s.category === 'done')?.id || first('done')
+  }
+  const [statusesOpen, setStatusesOpen] = useState(false)
+  const [statusDraft, setStatusDraft] = useState([])
+  const [migrations, setMigrations] = useState({})
+  const [syncActive, setSyncActive] = useState(false)
+  const syncQuery = useQuery({ queryKey: ['task-board-sync'], queryFn: async () => {
+    const state = await rest('/sync')
+    setSyncActive(!!state.running)
+    return state
+  }, refetchInterval: q => syncActive || (q.state?.data || q.data)?.running ? 1000 : false })
+  const syncRunning = syncActive || !!syncQuery.data?.running
+  const wasSyncing = useRef(false)
+  useEffect(() => {
+    if (wasSyncing.current && !syncRunning && !syncQuery.error && syncQuery.data) { query.refetch(); labelsQuery.refetch() }
+    wasSyncing.current = syncRunning
+  }, [syncRunning, syncQuery.error, syncQuery.data])
   const [view, setView] = useState(() => taskStorage.get('view', 'board') === 'list' ? 'list' : 'board')
-  const [filter, setFilter] = useState('all')
+  const [filter, setFilter] = useState('')
   const [search, setSearch] = useState('')
   const [labelFilter, setLabelFilter] = useState('')
   const [labelEdits, setLabelEdits] = useState({})
@@ -225,7 +249,7 @@ function TasksPage() {
   const allTasks = query.data?.tasks || []
   const selected = allTasks.find(task => task.id === selectedId)
   const tasks = [...allTasks].sort((a, b) => Number(b.pinned) - Number(a.pinned) || a.order - b.order)
-    .filter(t => (view === 'board' || filter === 'all' || t.status === filter) && (!labelFilter || (t.labels || []).includes(labelFilter)) && [t.title, t.ref, t.note].join(' ').toLowerCase().includes(search.toLowerCase()))
+    .filter(t => (view === 'board' || filter === '' || t.status === filter) && (!labelFilter || (t.labels || []).includes(labelFilter)) && [t.title, t.ref, t.note].join(' ').toLowerCase().includes(search.toLowerCase()))
   const action = (label, onClick, extra = {}) => jsx(Button, { 'aria-label': label, variant: 'ghost', size: 'sm', disabled: busy, onClick, children: label, ...extra })
   const sourceAction = task => task.url ? action('打开原地址', event => {
     event.stopPropagation()
@@ -260,10 +284,10 @@ function TasksPage() {
           children: [
           jsxs('div', { className: 'tb-card-top', children: [jsx('button', { type: 'button', className: 'tb-task-title', 'aria-label': '查看任务 ' + task.title, onClick: event => { rememberFocus(event); setSelectedId(task.id) }, children: [task.pinned ? jsx('span', { className: 'tb-pinned', role: 'img', title: '置顶', 'aria-label': '置顶', children: jsx(Codicon, { name: 'pinned', size: 14, 'aria-hidden': true }) }) : null, task.title] }),
             jsxs(DropdownMenu, { onOpenChange: open => { if (open) menuDialog.current = false }, children: [jsx(DropdownMenuTrigger, { asChild: true, children: action('任务操作', event => { menuDialog.current = false; rememberFocus(event) }, { 'aria-label': '任务操作 ' + task.title, className: 'tb-more', children: jsx(Codicon, { name: 'ellipsis', size: 14, 'aria-hidden': true }), onPointerDown: rememberFocus, onKeyDown: rememberFocus }) }), jsxs(DropdownMenuContent, { className: 'tb-root tb-menu', align: 'end', onCloseAutoFocus: event => { if (menuDialog.current) { event.preventDefault(); menuDialog.current = false } }, children: [
-            task.status !== 'todo' && !task.session_id && !launchedTasks.has(taskLaunchKey(task)) ? menuAction('开始会话', () => run(() => startTaskSession(task, body => update(task, body)))) : null,
+            category(task.status) !== 'todo' && !task.session_id && !launchedTasks.has(taskLaunchKey(task)) ? menuAction('开始会话', () => run(() => startTaskSession(task, body => update(task, body), first('doing')))) : null,
             menuAction('编辑', () => edit(task)), menuAction('删除', () => { menuDialog.current = true; setDeleting(task) }),
             menuAction(task.pinned ? '取消置顶' : '置顶', () => run(() => update(task, { pinned: !task.pinned }))),
-            menuAction(taskStatus[task.status], () => run(() => update(task, { status: { todo: 'doing', doing: 'done', done: 'todo' }[task.status] })), { 'aria-label': '切换状态 ' + task.title }),
+            menuAction(taskStatus[task.status], () => run(() => update(task, { status: nextStatus(task) })), { 'aria-label': '切换状态 ' + task.title }),
           ] })] }), sourceAction(task)] }),
           task.note ? jsx('div', { className: 'tb-task-note', children: task.note }) : null,
           jsxs('div', { className: 'tb-labels', children: [
@@ -272,8 +296,8 @@ function TasksPage() {
           ] }),
           view === 'list' ? jsx('span', { className: 'tb-list-status', children: taskStatus[task.status] }) : null,
           jsxs('div', { className: 'tb-card-foot', children: [
-            task.status === 'todo' ? !task.session_id ? action('▷ 开始任务', () => run(() => startTaskSession(task, body => update(task, body)))) : null : task.status === 'doing' ? action('✓ 标记完成', () => run(() => update(task, { status: 'done' }))) : action('↶ 重新打开', () => run(() => update(task, { status: 'todo' }))),
-            (task.session_id || task.status !== 'todo' && launchedTasks.has(taskLaunchKey(task))) ? action('打开会话', () => run(async () => { const link = launchedTasks.get(taskLaunchKey(task)) || task; await host.openSession(link.session_id, { profile: link.session_profile }) })) : null,
+            category(task.status) === 'todo' ? !task.session_id ? action('▷ 开始任务', () => run(() => startTaskSession(task, body => update(task, body), first('doing')))) : null : category(task.status) === 'doing' ? action(nextStatus(task) === first('done') ? '✓ 标记完成' : '→ ' + taskStatus[nextStatus(task)], () => run(() => update(task, { status: nextStatus(task) }))) : action('↶ 重新打开', () => run(() => update(task, { status: first('todo') }))),
+            (task.session_id || category(task.status) !== 'todo' && launchedTasks.has(taskLaunchKey(task))) ? action('打开会话', () => run(async () => { const link = launchedTasks.get(taskLaunchKey(task)) || task; await host.openSession(link.session_id, { profile: link.session_profile }) })) : null,
             jsx('time', { dateTime: task.updated_at || task.created_at, children: relativeTime(task.updated_at || task.created_at) })
           ] })
         ] }, task.id)
@@ -309,9 +333,35 @@ function TasksPage() {
       ] }), action('完成', () => setLabelsOpen(false), { variant: 'outline' })
       ] }) : null] }),
       jsxs('div', { className: 'tb-view-toggle', role: 'radiogroup', 'aria-label': '任务视图', children: [['board', '▦ 看板'], ['list', '☰ 列表']].map(([value, label]) => action(label, () => { setView(value); taskStorage.set('view', value) }, { role: 'radio', 'aria-checked': view === value, onKeyDown: e => { if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) { e.preventDefault(); const next = view === 'board' ? 'list' : 'board'; setView(next); taskStorage.set('view', next); e.currentTarget.parentElement.querySelectorAll('[role="radio"]')[next === 'board' ? 0 : 1].focus() } } })) }),
-      action('↻', () => run(() => Promise.resolve()), { 'aria-label': '刷新', className: 'tb-refresh' })] }),
-      jsxs('div', { className: 'tb-stats', 'aria-label': '任务统计', children: [jsx('span', { children: tasks.length + ' 个任务' }), ...Object.entries(taskStatus).map(([status, label]) => jsx('span', { children: allTasks.filter(task => task.status === status).length + ' ' + label }, status))] }),
-      view === 'list' ? jsxs('div', { className: 'tb-tabs', role: 'tablist', 'aria-label': '任务状态', children: Object.entries({ all: '全部', ...taskStatus }).map(([value, label]) => action(label, () => setFilter(value), { role: 'tab', 'aria-selected': filter === value })) }) : null,
+      action('管理状态', () => { setStatusDraft(statuses.map(s => ({ ...s }))); setMigrations({}); setStatusesOpen(true) }),
+      syncQuery.data?.available ? action(syncRunning ? '同步中…' : '立即同步', () => run(async () => { const state = await rest('/sync', { method: 'POST' }); setSyncActive(!!state.running); if (state.running) wasSyncing.current = true; await syncQuery.refetch() }), { disabled: busy || syncRunning, children: syncRunning ? jsxs('span', { role: 'status', children: [jsx(Codicon, { name: 'loading', className: 'animate-spin', 'aria-hidden': true }), ' 同步中…'] }) : '立即同步' }) : null,
+      action('↻', () => run(() => syncQuery.refetch?.()), { 'aria-label': '刷新', className: 'tb-refresh' })] }),
+      syncQuery.error || syncQuery.data?.last_result?.ok === false ? jsx('div', { role: 'alert', className: 'tb-alert', children: syncQuery.error?.message || syncQuery.data.last_result.message }) : null,
+      jsx(Dialog, { open: statusesOpen, onOpenChange: setStatusesOpen, children: statusesOpen ? jsxs(DialogContent, { className: 'tb-root tb-dialog', banner: failure?.message, children: [
+        jsxs(DialogHeader, { children: [jsx(DialogTitle, { children: '管理状态' }), jsx(DialogDescription, { children: '按顺序推进任务；每种类别至少保留一个状态。删除在用状态时请选择迁移目标。' })] }),
+        jsx('div', { className: 'tb-label-manager', style: { maxHeight: '60vh', overflowY: 'auto' }, children: statusDraft.map((status, index) => {
+          const patch = fields => setStatusDraft(statusDraft.map(s => s.id === status.id ? { ...s, ...fields } : s))
+          const move = delta => { const next = [...statusDraft]; [next[index], next[index + delta]] = [next[index + delta], next[index]]; setStatusDraft(next) }
+          const used = (query.data?.tasks || []).some(t => t.status === status.id)
+          return jsxs('div', { role: 'group', 'aria-label': '状态 ' + status.name, children: [
+            jsx('input', { 'aria-label': '状态名称 ' + status.id, maxLength: 40, value: status.name, onChange: e => patch({ name: e.target.value }) }),
+            palette(status.color, color => patch({ color })),
+            jsx('select', { 'aria-label': '状态类别 ' + status.id, value: status.category, onChange: e => patch({ category: e.target.value }), children: [['todo', '待办类'], ['doing', '进行类'], ['done', '完成类']].map(([value, name]) => jsx('option', { value, children: name }, value)) }),
+            action('上移', () => move(-1), { disabled: busy || index === 0, 'aria-label': '上移 ' + status.name }),
+            action('下移', () => move(1), { disabled: busy || index === statusDraft.length - 1, 'aria-label': '下移 ' + status.name }),
+            used ? jsx('select', { 'aria-label': '迁移目标 ' + status.id, value: migrations[status.id] || '', onChange: e => setMigrations({ ...migrations, [status.id]: e.target.value }), children: [jsx('option', { value: '', children: '选择迁移目标' }), ...statusDraft.filter(s => s.id !== status.id).map(s => jsx('option', { value: s.id, children: s.name }, s.id))] }) : null,
+            action('删除状态', () => setStatusDraft(statusDraft.filter(s => s.id !== status.id)), { 'aria-label': '删除状态 ' + status.name, disabled: busy || used && !migrations[status.id] || Object.entries(migrations).some(([id, target]) => target === status.id && !statusDraft.some(s => s.id === id)) })
+          ] }, status.id)
+        }) }),
+        action('添加状态', () => setStatusDraft([...statusDraft, { id: 'status-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7), name: '新状态', color: 'blue', category: 'doing' }])),
+        action('保存状态', () => run(async () => {
+          const surviving = new Set(statusDraft.map(s => s.id))
+          await rest('/statuses', { method: 'PUT', body: { statuses: statusDraft, migrations: Object.fromEntries(Object.entries(migrations).filter(([id]) => !surviving.has(id))) } })
+          setFilter(''); setStatusesOpen(false)
+        }), { variant: 'default' })
+      ] }) : null }),
+      jsxs('div', { className: 'tb-stats', 'aria-label': '任务统计', children: [jsx('span', { children: tasks.length + ' 个任务' }), ...statuses.map(s => [s.id, s.name]).map(([status, label]) => jsx('span', { children: allTasks.filter(task => task.status === status).length + ' ' + label }, status))] }),
+      view === 'list' ? jsxs('div', { className: 'tb-tabs', role: 'tablist', 'aria-label': '任务状态', children: [['', '全部'], ...statuses.map(s => [s.id, s.name])].map(([value, label]) => action(label, () => setFilter(value), { role: 'tab', 'aria-selected': filter === value })) }) : null,
       error || failure || query.isError || labelsQuery.isError ? jsx('div', { className: 'tb-alert', role: 'alert', children: failure?.message || error || '加载失败' }) : null,
       jsx(Dialog, { open: !!editing, onOpenChange: open => { if (!open && !busyRef.current) setEditing(null) }, children: editing ? jsxs(DialogContent, { className: 'tb-root tb-dialog', banner: failure?.message, onCloseAutoFocus: restoreFocus, children: [
       jsxs(DialogHeader, { children: [jsx(DialogTitle, { children: editing === 'new' ? '新建任务' : '编辑任务' }), jsx(DialogDescription, { children: '填写任务目标，标签和关联信息可随时调整。' })] }),
@@ -330,7 +380,7 @@ function TasksPage() {
         jsxs(DialogHeader, { children: [jsx(DialogTitle, { children: selected.title }), jsx(DialogDescription, { children: selected.ref || '任务详情' })] }),
         selected.note ? jsx('p', { className: 'tb-detail-note', children: selected.note }) : null,
         jsx('div', { className: 'tb-labels', children: (selected.labels || []).map(name => labelChip(name, definitions[name])) }),
-        jsx('select', { 'aria-label': '更新任务状态', disabled: busy, value: selected.status, onChange: event => run(() => update(selected, { status: event.target.value })), children: Object.entries(taskStatus).map(([value, label]) => jsx('option', { value, children: label }, value)) }),
+        jsx('select', { 'aria-label': '更新任务状态', disabled: busy, value: selected.status, onChange: event => run(() => update(selected, { status: event.target.value })), children: statuses.map(s => [s.id, s.name]).map(([value, label]) => jsx('option', { value, children: label }, value)) }),
         jsxs('div', { className: 'tb-dialog-actions', children: [action('关闭', () => setSelectedId(null)), action('编辑任务', () => { setSelectedId(null); edit(selected) }, { variant: 'outline' })] })
       ] }) : null }),
       jsx(Dialog, { open: !!deleting, onOpenChange: open => { if (!open && !busyRef.current) setDeleting(null) }, children: deleting ? jsxs(DialogContent, { className: 'tb-root tb-dialog', banner: failure?.message, onCloseAutoFocus: restoreFocus, children: [
@@ -338,8 +388,8 @@ function TasksPage() {
         jsxs('div', { className: 'tb-dialog-actions', children: [action('取消', () => setDeleting(null)), action('确认删除', () => run(async () => { await rest('/tasks/' + deleting.id, { method: 'DELETE' }); setDeleting(null) }), { variant: 'destructive' })] })
       ] }) : null }),
       query.isLoading ? jsx('div', { role: 'status', children: '加载任务…' }) : null,
-      canRenderTasks && view === 'list' ? jsx('div', { className: 'tb-task-list', 'aria-label': '任务列表', children: tasks.length ? tasks.map(renderTask) : jsx(EmptyState, { title: search || labelFilter || filter !== 'all' ? '没有匹配的任务' : '暂无任务', description: '调整筛选条件，或新建一个任务。' }) }) : null,
-      canRenderTasks && view === 'board' ? jsx('div', { className: 'tb-task-columns', children: Object.entries(taskStatus).map(([status, label]) => jsxs('section', {
+      canRenderTasks && view === 'list' ? jsx('div', { className: 'tb-task-list', 'aria-label': '任务列表', children: tasks.length ? tasks.map(renderTask) : jsx(EmptyState, { title: search || labelFilter || filter !== '' ? '没有匹配的任务' : '暂无任务', description: '调整筛选条件，或新建一个任务。' }) }) : null,
+      canRenderTasks && view === 'board' ? jsx('div', { className: 'tb-task-columns', children: statuses.map(s => [s.id, s.name]).map(([status, label]) => jsxs('section', {
         className: cn('tb-task-zone', dropTarget === status && 'tb-drop-target'), 'aria-label': label,
         onDragOver: e => {
           if (!draggedTask.current || draggedTask.current.status === status || busyRef.current) return
@@ -352,11 +402,11 @@ function TasksPage() {
           draggedTask.current = null; setDragging(null); setDropTarget(null); setInsertion(null)
           if (task && task.status !== status) return run(() => update(task, { status }))
         },
-        children: [jsxs('div', { className: 'tb-column-head', children: [jsx('span', { className: 'tb-label-dot', style: { backgroundColor: { todo: labelPalette.gray, doing: labelPalette.blue, done: labelPalette.green }[status] } }), jsx('strong', { children: label }), jsx('span', { className: 'tb-count', children: tasks.filter(t => t.status === status).length }), action('＋', event => edit(null, status, event), { 'aria-label': '新建' + label + '任务' })] }),
+        children: [jsxs('div', { className: 'tb-column-head', children: [jsx('span', { className: 'tb-label-dot', style: { backgroundColor: labelPalette[statuses.find(s => s.id === status)?.color] } }), jsx('strong', { children: label }), jsx('span', { className: 'tb-count', children: tasks.filter(t => t.status === status).length }), action('＋', event => edit(null, status, event), { 'aria-label': '新建' + label + '任务' })] }),
           !tasks.some(t => t.status === status) ? jsxs('div', { className: 'tb-empty', children: [
-            jsx('span', { className: 'tb-empty-icon', 'aria-hidden': true, children: status === 'done' ? '✓' : '＋' }),
-            jsx('strong', { children: search || labelFilter ? '没有匹配的任务' : status === 'done' ? '完成的每一步，都值得记录' : '这里还没有任务' }),
-            jsx('p', { children: search || labelFilter ? '试试其他关键词或标签。' : status === 'done' ? '完成任务后，会自动收纳到这里。' : '添加一个任务，开始推进你的计划。' })
+            jsx('span', { className: 'tb-empty-icon', 'aria-hidden': true, children: category(status) === 'done' ? '✓' : '＋' }),
+            jsx('strong', { children: search || labelFilter ? '没有匹配的任务' : category(status) === 'done' ? '完成的每一步，都值得记录' : '这里还没有任务' }),
+            jsx('p', { children: search || labelFilter ? '试试其他关键词或标签。' : category(status) === 'done' ? '完成任务后，会自动收纳到这里。' : '添加一个任务，开始推进你的计划。' })
           ] }) : null,
           ...tasks.filter(t => t.status === status).map(renderTask), action('＋ 添加任务', event => edit(null, status, event), { className: 'tb-add-task', 'aria-label': '添加' + label + '任务' })
         ]

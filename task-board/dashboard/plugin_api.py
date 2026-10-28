@@ -3,6 +3,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import signal
+import subprocess
+import sys
 import tempfile
 import threading
 from datetime import datetime, timezone
@@ -12,7 +16,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, HTTPException
 
 router = APIRouter()
-API_VERSION = 2  # Bump when the API contract changes.
+API_VERSION = 3  # Bump when the API contract changes.
 
 
 def _task_url(url: str) -> str:
@@ -28,6 +32,29 @@ def _task_url(url: str) -> str:
 
 
 LABEL_COLORS = ("red", "orange", "amber", "green", "teal", "blue", "violet", "gray")
+
+
+DEFAULT_STATUSES = [
+    {"id": "todo", "name": "待办", "color": "gray", "category": "todo"},
+    {"id": "doing", "name": "进行中", "color": "blue", "category": "doing"},
+    {"id": "done", "name": "已完成", "color": "green", "category": "done"},
+]
+
+
+def _statuses(value):
+    if not isinstance(value, list) or not value:
+        raise HTTPException(400, "statuses must be a non-empty ordered list")
+    result, ids = [], set()
+    for item in value:
+        if (not isinstance(item, dict) or set(item) != {"id", "name", "color", "category"}
+                or not isinstance(item["id"], str) or not re.fullmatch(r"[A-Za-z0-9_-]+", item["id"])
+                or item["id"] in ids or item["category"] not in ("todo", "doing", "done")):
+            raise HTTPException(400, "invalid or duplicate status ID/category")
+        ids.add(item["id"])
+        result.append({**item, "name": _label_name(item["name"]), "color": _label_color(item["color"])})
+    if {item["category"] for item in result} != {"todo", "doing", "done"}:
+        raise HTTPException(400, "at least one status in each category is required")
+    return result
 
 
 def _label_name(name) -> str:
@@ -73,13 +100,14 @@ def _tasks_read() -> dict:
             if _label_name(name) != name:
                 raise ValueError()
             _label_color(color)
+        data["statuses"] = _statuses(data.get("statuses", DEFAULT_STATUSES))
         ids = []
         for index, task in enumerate(data["tasks"]):
             if (not isinstance(task, dict) or not isinstance(task.get("id"), str) or not task["id"].isdigit()
                     or task.get("order") != index or not all(isinstance(task.get(k), str) for k in ("created_at", "updated_at"))
                     or not {"title", "ref", "note", "url", "status", "pinned"} <= task.keys()):
                 raise ValueError()
-            _task_fields({k: v for k, v in task.items() if k not in ("id", "order", "created_at", "updated_at")})
+            _task_fields({k: v for k, v in task.items() if k not in ("id", "order", "created_at", "updated_at")}, data["statuses"])
             task["labels"] = _task_labels(task.get("labels", []))
             _check_labels(data, task)
             ids.append(int(task["id"]))
@@ -87,7 +115,7 @@ def _tasks_read() -> dict:
             raise ValueError()
         return data
     except FileNotFoundError:
-        return {"next_id": 10, "tasks": [], "labels": {}}
+        return {"next_id": 10, "tasks": [], "labels": {}, "statuses": [dict(s) for s in DEFAULT_STATUSES]}
     except (OSError, ValueError, HTTPException):
         raise HTTPException(500, "cannot read tasks.json")
 
@@ -111,7 +139,7 @@ def _tasks_write(data: dict) -> None:
             os.unlink(temporary)
 
 
-def _task_fields(body: dict) -> dict:
+def _task_fields(body: dict, statuses) -> dict:
     strings = {"title", "ref", "note", "url", "session_id", "session_profile", "session_title"}
     if set(body) - strings - {"status", "pinned", "labels"}:
         raise HTTPException(400, "unknown task field")
@@ -119,7 +147,7 @@ def _task_fields(body: dict) -> dict:
         raise HTTPException(400, "task text fields must be strings")
     if "title" in body and not body["title"].strip():
         raise HTTPException(400, "title is required")
-    if "status" in body and body["status"] not in ("todo", "doing", "done"):
+    if "status" in body and body["status"] not in [s["id"] for s in statuses]:
         raise HTTPException(400, "invalid task status")
     if "pinned" in body and not isinstance(body["pinned"], bool):
         raise HTTPException(400, "pinned must be boolean")
@@ -140,20 +168,21 @@ def _task_find(data: dict, task_id: str) -> dict:
 @router.get("/tasks")
 def list_tasks() -> dict:
     with _tasks_lock:
-        return {"api_version": API_VERSION, "tasks": _tasks_read()["tasks"]}
+        data = _tasks_read()
+        return {"api_version": API_VERSION, "tasks": data["tasks"], "statuses": data["statuses"]}
 
 
 @router.post("/tasks")
 def create_task(body: dict) -> dict:
-    fields = _task_fields(body)
-    if "title" not in fields:
-        raise HTTPException(400, "title is required")
     with _tasks_lock:
         data = _tasks_read()
+        fields = _task_fields(body, data["statuses"])
+        if "title" not in fields:
+            raise HTTPException(400, "title is required")
         _check_labels(data, fields)
         now = datetime.now(timezone.utc).isoformat()
         task = {"id": str(data["next_id"]), "title": fields.pop("title"), "ref": "", "note": "", "url": "",
-                "status": "todo", "pinned": False, "labels": [], "order": len(data["tasks"]), "created_at": now, "updated_at": now, **fields}
+                "status": next(s["id"] for s in data["statuses"] if s["category"] == "todo"), "pinned": False, "labels": [], "order": len(data["tasks"]), "created_at": now, "updated_at": now, **fields}
         data["next_id"] += 1
         data["tasks"].append(task)
         _tasks_write(data)
@@ -162,9 +191,9 @@ def create_task(body: dict) -> dict:
 
 @router.patch("/tasks/{task_id}")
 def edit_task(task_id: str, body: dict) -> dict:
-    fields = _task_fields(body)
     with _tasks_lock:
         data = _tasks_read()
+        fields = _task_fields(body, data["statuses"])
         task = _task_find(data, task_id)
         _check_labels(data, fields)
         task.update(fields, updated_at=datetime.now(timezone.utc).isoformat())
@@ -283,3 +312,118 @@ def delete_label(name: str) -> dict:
                             updated_at=datetime.now(timezone.utc).isoformat())
         _tasks_write(data)
         return {"labels": data["labels"]}
+
+
+@router.get("/statuses")
+def list_statuses():
+    with _tasks_lock:
+        return {"statuses": _tasks_read()["statuses"]}
+
+
+@router.put("/statuses")
+def replace_statuses(body: dict):
+    if set(body) - {"statuses", "migrations"} or "statuses" not in body:
+        raise HTTPException(400, "statuses and migrations required")
+    statuses = _statuses(body["statuses"])
+    migrations = body.get("migrations", {})
+    with _tasks_lock:
+        data = _tasks_read()
+        surviving = {s["id"] for s in statuses}
+        removed = {s["id"] for s in data["statuses"]} - surviving
+        if (not isinstance(migrations, dict) or any(k not in removed or not isinstance(v, str) or v not in surviving for k, v in migrations.items())):
+            raise HTTPException(400, "migration must map removed statuses to surviving statuses")
+        if any(t["status"] in removed and t["status"] not in migrations for t in data["tasks"]):
+            raise HTTPException(400, "used status requires an explicit migration")
+        for task in data["tasks"]:
+            if task["status"] in removed:
+                task["status"] = migrations[task["status"]]
+        data["statuses"] = statuses
+        _tasks_write(data)
+        return {"statuses": statuses}
+
+
+_sync_lock = threading.Lock()
+_sync_running = False
+_sync_last_result = None
+
+
+def _sync_script():
+    try:
+        settings = json.loads((_tasks_file().parent / "settings.json").read_text(encoding="utf-8"))
+        script = settings.get("sync_script")
+        if isinstance(script, str) and Path(script).is_absolute() and Path(script).suffix == ".py" and Path(script).is_file():
+            return script
+    except (OSError, ValueError, AttributeError):
+        pass
+    return None
+
+
+def _run_sync(script):
+    global _sync_running, _sync_last_result
+    result = {"started_at": datetime.now(timezone.utc).isoformat(), "ok": False}
+    process = None
+    try:
+        # File-backed output avoids unbounded memory use; raw output is never exposed.
+        with tempfile.TemporaryFile() as output:
+            process = subprocess.Popen([sys.executable, script], stdout=output, stderr=subprocess.DEVNULL, start_new_session=True)
+            try:
+                code = process.wait(timeout=180)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait()
+                result["message"] = "Sync timed out (180s)"
+            else:
+                result["ok"] = code == 0
+                result["message"] = "Sync completed" if code == 0 else "Sync failed (exit %s)" % code
+                output.seek(0)
+                try:
+                    summary = json.loads(output.read(65536))
+                    for key in ("created", "updated", "skipped", "failed", "total"):
+                        value = summary.get(key)
+                        if type(value) is int and 0 <= value <= 1000000000:
+                            result[key] = value
+                    exits = summary.get("stage_exits")
+                    if isinstance(exits, list) and len(exits) <= 100 and all(type(code) is int and -255 <= code <= 255 for code in exits):
+                        result["stage_exits"] = exits
+                except (ValueError, AttributeError):
+                    pass
+    except Exception:
+        result["message"] = "Unable to run sync adapter"
+    finally:
+        if process is not None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        result["finished_at"] = datetime.now(timezone.utc).isoformat()
+        with _sync_lock:
+            _sync_last_result = result
+            _sync_running = False
+
+
+@router.get("/sync")
+def sync_state():
+    with _sync_lock:
+        return {"available": bool(_sync_script()), "running": _sync_running, "last_result": _sync_last_result}
+
+
+@router.post("/sync")
+def start_sync(body: dict = {}):
+    global _sync_running
+    if body:
+        raise HTTPException(400, "sync accepts no command or options")
+    with _sync_lock:
+        script = _sync_script()
+        if not script:
+            raise HTTPException(400, "sync adapter is not configured")
+        if not _sync_running:
+            _sync_running = True
+            try:
+                threading.Thread(target=_run_sync, args=(script,), daemon=True).start()
+            except Exception:
+                _sync_running = False
+                raise HTTPException(500, "Unable to start sync")
+        return {"available": True, "running": True, "last_result": _sync_last_result}

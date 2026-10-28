@@ -34,7 +34,7 @@ class TasksTests(unittest.TestCase):
         return result.json()
 
     def test_crud_persistence_and_non_reused_identity(self):
-        self.assertEqual(self.client.get('/tasks').json(), {'api_version': api.API_VERSION, 'tasks': []})
+        self.assertEqual(self.client.get('/tasks').json(), {'api_version': api.API_VERSION, 'tasks': [], 'statuses': api.DEFAULT_STATUSES})
         task = self.create(ref='GH-12', note='note', url='https://github.com/example/repo/issues/12')
         self.assertEqual(task['ref'], 'GH-12')
         self.assertEqual(task['url'], 'https://github.com/example/repo/issues/12')
@@ -215,3 +215,78 @@ class TasksTests(unittest.TestCase):
             self.assertEqual(getattr(self.client, method)(url, json=body).status_code, status)
         self.assertEqual(self.client.delete('/labels?name=missing').status_code, 404)
         self.assertEqual(api._tasks_file().read_bytes(), before)
+
+    def test_custom_status_config_atomic_migration_and_default(self):
+        task = self.create(note='keep', pinned=True, session_id='linked')
+        statuses = [{**s} for s in api.DEFAULT_STATUSES]
+        statuses[0] = {'id': 'backlog', 'name': '计划', 'color': 'amber', 'category': 'todo'}
+        statuses.insert(2, {'id': 'review', 'name': '待审核', 'color': 'violet', 'category': 'doing'})
+        before = api._tasks_file().read_bytes()
+        self.assertEqual(self.client.put('/statuses', json={'statuses': statuses}).status_code, 400)
+        self.assertEqual(api._tasks_file().read_bytes(), before)
+        self.assertEqual(self.client.put('/statuses', json={'statuses': statuses, 'migrations': {'todo': 'backlog'}}).status_code, 200)
+        self.assertEqual(self.client.get('/tasks').json()['tasks'][0], {**task, 'status': 'backlog'})
+        self.assertEqual(self.client.get('/statuses').json()['statuses'], statuses)
+        self.assertEqual(self.create()['status'], 'backlog')
+        a = self.create(status='review')
+        b = self.create(status='review')
+        result = self.client.post('/tasks/' + b['id'] + '/reorder', json={'target_id': a['id'], 'placement': 'before'})
+        self.assertEqual(result.status_code, 200)
+        self.assertLess([t['id'] for t in result.json()['tasks']].index(b['id']), [t['id'] for t in result.json()['tasks']].index(a['id']))
+        self.assertEqual(self.client.patch('/tasks/' + a['id'], json={'status': 'todo'}).status_code, 400)
+        before = api._tasks_file().read_bytes()
+        for bad in [statuses + [statuses[0]], statuses[1:], [{**s, 'color': 'pink'} for s in statuses], [{**s, 'name': ' '} for s in statuses]]:
+            self.assertEqual(self.client.put('/statuses', json={'statuses': bad}).status_code, 400)
+            self.assertEqual(api._tasks_file().read_bytes(), before)
+        with patch.object(api.os, 'replace', side_effect=OSError):
+            self.assertEqual(self.client.put('/statuses', json={'statuses': api.DEFAULT_STATUSES, 'migrations': {'backlog': 'todo', 'review': 'doing'}}).status_code, 500)
+        self.assertEqual(api._tasks_file().read_bytes(), before)
+
+    def test_manual_sync_local_config_singleflight_and_safe_result(self):
+        from unittest.mock import Mock
+        api._sync_running = False
+        api._sync_last_result = None
+        self.assertEqual(self.client.get('/sync').json()['available'], False)
+        self.assertEqual(self.client.post('/sync').status_code, 400)
+        script = self.home / 'adapter.py'
+        script.write_text('')
+        settings = self.home / 'task-board/settings.json'
+        settings.parent.mkdir(exist_ok=True)
+        settings.write_text(json.dumps({'sync_script': str(script)}))
+        with patch.object(api.threading, 'Thread') as thread:
+            for _ in range(2):
+                self.assertTrue(self.client.post('/sync').json()['running'])
+            self.assertEqual(thread.call_count, 1)
+            for _ in range(3):
+                self.assertTrue(self.client.get('/sync').json()['running'])
+            self.assertEqual(thread.call_count, 1)
+        self.assertEqual(self.client.post('/sync', json={'script': '/secret'}).status_code, 400)
+        def spawn(*args, **kwargs):
+            self.assertEqual(args[0], [api.sys.executable, str(script)])
+            self.assertTrue(kwargs['start_new_session'])
+            self.assertEqual(kwargs['stderr'], api.subprocess.DEVNULL)
+            kwargs['stdout'].write(b'{"created":2,"updated":true,"secret":"credential","message":"secret","stage_exits":[0,1]}')
+            return Mock(pid=123, wait=Mock(return_value=0))
+        with patch.object(api.subprocess, 'Popen', side_effect=spawn), patch.object(api.os, 'killpg') as kill:
+            kill.side_effect = lambda *args: self.assertTrue(api._sync_running)
+            api._run_sync(str(script))
+            kill.assert_called_once_with(123, api.signal.SIGKILL)
+        result = self.client.get('/sync').json()
+        self.assertFalse(result['running'])
+        self.assertEqual(result['last_result']['created'], 2)
+        self.assertEqual(result['last_result']['stage_exits'], [0, 1])
+        self.assertNotIn('credential', json.dumps(result))
+        self.assertNotIn('updated', result['last_result'])
+        process = Mock(pid=123, wait=Mock(side_effect=[api.subprocess.TimeoutExpired('adapter', 180), -9]))
+        with patch.object(api.subprocess, 'Popen', return_value=process), patch.object(api.os, 'killpg') as kill:
+            api._run_sync(str(script))
+            self.assertEqual(kill.call_args_list, [((123, api.signal.SIGKILL),), ((123, api.signal.SIGKILL),)])
+        with patch.object(api.subprocess, 'Popen', return_value=Mock(pid=123, wait=Mock(return_value=0))), patch.object(api.os, 'killpg', side_effect=ProcessLookupError):
+            api._run_sync(str(script))
+        self.assertTrue(self.client.get('/sync').json()['last_result']['ok'])
+        with patch.object(api.subprocess, 'Popen', return_value=Mock(pid=123, wait=Mock(side_effect=[api.subprocess.TimeoutExpired('adapter', 180), -9]))), patch.object(api.os, 'killpg', side_effect=ProcessLookupError):
+            api._run_sync(str(script))
+        self.assertIn('timed out', self.client.get('/sync').json()['last_result']['message'])
+        with patch.object(api.subprocess, 'Popen', side_effect=OSError('credential')):
+            api._run_sync(str(script))
+        self.assertNotIn('credential', json.dumps(self.client.get('/sync').json()))

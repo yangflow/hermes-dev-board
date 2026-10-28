@@ -14,10 +14,10 @@ Append `task-board` to the gateway config's existing `plugins.enabled` list, pre
 
 Open the standalone **Task Board** sidebar entry, or run **Task Board：打开任务清单**
 from the command palette (`/tasks`). This is a simple TODO list: create/edit a required title,
-optional external reference (`ref`), note and tracker link (`url`); cycle status through todo → doing → done → todo,
-delete, pin, or move rows up/down within their pinned/unpinned group. Pinned tasks appear first.
+optional external reference (`ref`), note and tracker link (`url`); advance through configured statuses,
+delete, pin, or drag rows within their pinned/unpinned group. Pinned tasks appear first.
 The All / Todo / Doing / Done tabs and search (title, reference and note) filter locally.
-Tracker links open in the system browser; no ticket fetching or cron ingestion occurs.
+Tracker links open in the system browser; no ticket fetching or cron ingestion occurs automatically.
 
 **开始会话** creates a real session on the current gateway profile using the supported
 `session.create({title})` RPC, then opens it with `host.openSession`. Unlike `host.newChat`,
@@ -69,3 +69,37 @@ Remove `~/.hermes/plugins/task-board` and `~/.hermes/desktop-plugins/task-board`
 ## License
 
 [MIT](../LICENSE)
+
+## Custom statuses and manual sync (API v3)
+
+**管理状态** edits the ordered status definitions stored alongside labels in `tasks.json`:
+`statuses: [{"id":"todo","name":"待办","color":"gray","category":"todo"}, ...]`.
+Older files default to todo / 待办 / gray, doing / 进行中 / blue, done / 已完成 / green.
+IDs are stable ASCII letters, digits, underscores or hyphens; names are nonempty and at most 40 characters.
+Colors use the label palette. At least one status in each category (`todo`, `doing`, `done`) is required.
+Columns, filters, statistics and selectors follow this order; use up/down buttons in the manager to reorder.
+New tasks use the first todo status. Starting moves to first doing, reopening to first todo;
+doing tasks advance to the next configured doing/done status (or first done).
+
+`GET /statuses` returns definitions; `GET /tasks` includes `statuses` and `api_version: 3`.
+`PUT /statuses` accepts the full ordered `statuses` and an explicit `migrations` map,
+for example `{"todo":"backlog"}` when removing todo. Removing a used status requires a surviving target.
+Definitions and migrated task statuses save in one atomic transaction; other task fields are preserved.
+The built-in IDs may be removed. External importers must use the configured first todo ID.
+
+Manual sync is optional and separate from **刷新**, which only reloads stored data.
+An owner can configure `$HERMES_HOME/task-board/settings.json` with
+`{"sync_script":"/absolute/path/to/workflow-sync.py"}`. The file must exist and end in `.py`.
+This is a trusted local code execution setting: only the owner-local configuration chooses the adapter;
+HTTP clients cannot supply a script, command or arguments. It runs with the gateway Python interpreter,
+without a shell, in a separate process group, with a 180-second timeout that kills descendants.
+No adapter is installed or configured by this repository.
+
+`GET /sync` is read-only and returns `available`, `running`, `last_result`; without configuration no sync button appears.
+`POST /sync` starts one background job per process; repeated clicks while running do not spawn another.
+**立即同步** polls only while running and refreshes tasks (including statuses) and labels on completion.
+Failures remain visible and can be retried. Sync never automatically changes task state in the board API.
+Adapters may emit a JSON summary with nonnegative integer `created`, `updated`, `skipped`, `failed`, `total` counts.
+An optional `stage_exits` array may contain up to 100 integer exit codes (-255 to 255), without stage names.
+Only these sanitized counts/exit codes, timestamps and a short generated outcome are exposed; raw stdout/stderr,
+credentials and exception text are never returned. Status changes remain explicit user actions or adapter-owned behavior.
