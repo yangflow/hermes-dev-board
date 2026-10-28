@@ -1,4 +1,4 @@
-import { cn, host, useQuery, ROUTES_AREA, SIDEBAR_NAV_AREA, PALETTE_AREA, Badge, Button, EmptyState, ScrollArea } from '@hermes/plugin-sdk'
+import { cn, host, useQuery, ROUTES_AREA, SIDEBAR_NAV_AREA, PALETTE_AREA, Badge, Button, EmptyState, ScrollArea, Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
 import { useRef, useState } from 'react'
 
@@ -22,98 +22,94 @@ const rest = async (path, options) => {
     throw backendError(null, error)
   }
 }
-const taskBoardStyles = `.tb-root { min-width:0; width:100%; max-width:100%; box-sizing:border-box; color:var(--ui-text-primary); font-size:12px; }
-.tb-root *, .tb-root *::before, .tb-root *::after { box-sizing:border-box; }
+const taskBoardStyles = `.tb-root { --tb-space:calc(.25rem * var(--spacing-mul, 1)); --tb-surface:var(--ui-bg-quaternary); min-width:0; width:100%; max-width:100%; color:var(--ui-text-primary); font-size:12px; line-height:1.6; container-type:inline-size; }
+.tb-root, .tb-root *, .tb-root *::before, .tb-root *::after { box-sizing:border-box; }
 .tb-root button, .tb-root input, .tb-root select { max-width:100%; font:inherit; }
 .tb-root button { cursor:pointer; }
-.tb-root button:focus-visible, .tb-root input:focus-visible, .tb-root select:focus-visible, .tb-root [tabindex]:focus-visible { outline:2px solid var(--ui-accent); outline-offset:2px; }
 .tb-root button:disabled { cursor:default; opacity:.5; }
-.tb-root .tb-tasks { padding:calc(var(--tb-space) * 3); display:flex; flex-direction:column; gap:calc(var(--tb-space) * 2); min-width:0; }
-.tb-root .tb-task-columns { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:calc(var(--tb-space) * 3); }
-.tb-root .tb-task-zone { min-width:0; min-height:100px; padding:calc(var(--tb-space) * 2); border:1px solid var(--ui-stroke-secondary); border-radius:8px; }
-.tb-root .tb-task-zone.tb-drop-target { border-color:var(--ui-accent); background:color-mix(in srgb, var(--ui-accent) 10%, transparent); }
-.tb-root .tb-task-row[draggable="true"] { user-select:none; cursor:grab; }
-.tb-root .tb-task-row.tb-dragging { opacity:0.45; }
-@media (max-width:700px) { .tb-root .tb-task-columns { grid-template-columns:1fr; } }
-.tb-root .tb-task-form { flex-wrap:wrap; }
-.tb-root .tb-task-form input { flex:1 1 100%; }
-.tb-root .tb-task-row { padding:calc(var(--tb-space) * 2) 0; border-bottom:1px solid var(--ui-stroke-secondary); min-width:0; }
-.tb-root .tb-task-row button { min-width:0; white-space:normal; overflow-wrap:anywhere; }
-.tb-root .tb-task-id { display:inline-block; min-width:0; max-width:100%; overflow-wrap:anywhere; }
-.tb-root .tb-task-title { flex:1 1 120px; min-width:0; overflow-wrap:anywhere; font-weight:600; }
-.tb-root .tb-task-note { white-space:pre-wrap; overflow-wrap:anywhere; color:var(--ui-text-secondary); padding:calc(var(--tb-space) * 1) 0; }
-.tb-root .tb-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:calc(var(--tb-space) * 1.5); min-width:0; }
-.tb-root .tb-title { font-size:14px; font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1 1 100px; }
-.tb-root select, .tb-root input { min-width:0; flex:1; height:32px; padding:calc(var(--tb-space) * 1.25) calc(var(--tb-space) * 2); border:1px solid var(--ui-stroke-secondary); border-radius:4px; color:var(--ui-text-primary); background:transparent; }
-.tb-root .tb-section { margin:calc(var(--tb-space) * 2.5) calc(var(--tb-space) * 1) calc(var(--tb-space) * 1); padding:calc(var(--tb-space) * 1.5) 0; border-bottom:1px solid var(--ui-stroke-secondary); color:var(--ui-text-secondary); font-size:12px; font-weight:600; }
-.tb-root form { display:flex; gap:calc(var(--tb-space) * 1.5); align-items:center; min-width:0; }
-.tb-root .tb-label { display:inline-flex; align-items:center; gap:calc(var(--tb-space) * 1); border-radius:10px; padding:calc(var(--tb-space) * 0.5) calc(var(--tb-space) * 1.75); max-width:100%; overflow-wrap:anywhere; }
-.tb-root .tb-label-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
-.tb-root .tb-labels { display:flex; flex-wrap:wrap; gap:calc(var(--tb-space) * 1); width:100%; min-width:0; }
-.tb-root .tb-label-choice { border:2px solid transparent; border-radius:12px; padding:calc(var(--tb-space) * 0.25); background:transparent; }
-.tb-root .tb-label-choice[aria-pressed="true"] { border-color:var(--ui-text-primary); }
-.tb-root .tb-label-manager summary { cursor:pointer; color:var(--ui-text-secondary); }
-.tb-root .tb-label-manager { border:1px solid var(--ui-stroke-secondary); border-radius:8px; padding:calc(var(--tb-space) * 3); min-width:0; }
-.tb-root .tb-label-manager form { flex-wrap:wrap; margin:calc(var(--tb-space) * 1.5) 0; }
-.tb-root .tb-label-manager input { flex:1 1 100px; }
-.tb-root .tb-palette { display:flex; gap:calc(var(--tb-space) * 1); flex-wrap:wrap; }
-.tb-root .tb-palette button { width:24px; height:24px; padding:calc(var(--tb-space) * 0.5); border:2px solid transparent; border-radius:50%; }
-.tb-root .tb-palette button[aria-pressed="true"] { border-color:var(--ui-text-primary); }
-.tb-root .tb-palette span { display:block; width:100%; height:100%; border-radius:50%; }
-.tb-root .tb-tabs { display:flex; gap:calc(var(--tb-space) * 0.5); padding:calc(var(--tb-space) * 0.75); border:1px solid var(--ui-stroke-secondary); border-radius:8px; }
-.tb-root .tb-tabs button { flex:1; min-width:0; padding:calc(var(--tb-space) * 1.25); border:0; border-radius:5px; background:transparent; color:var(--ui-text-secondary); }
-.tb-root .tb-tabs button[aria-selected="true"] { background:var(--chrome-action-hover); color:var(--ui-text-primary); font-weight:600; }
-.tb-root .tb-filters { display:flex; gap:calc(var(--tb-space) * 2); min-width:0; }
-.tb-root .tb-filters input { flex:2; width:0; }
-.tb-root .tb-filters select { flex:1; width:0; }
-.tb-root .tb-primary { background:var(--ui-accent); color:var(--ui-text-primary); }
-.tb-root .tb-refresh { width:32px; height:32px; padding:0; color:var(--ui-text-secondary); }
-.tb-root .tb-empty { text-align:center; padding:calc(var(--tb-space) * 5) calc(var(--tb-space) * 2); color:var(--ui-text-secondary); }
-.tb-root .tb-alert { padding:calc(var(--tb-space) * 2.5) calc(var(--tb-space) * 3); border:1px solid var(--ui-stroke-secondary); border-radius:8px; overflow-wrap:anywhere; }
-.tb-root { --tb-space:calc(.25rem * var(--spacing-mul)); --tb-surface:color-mix(in srgb, var(--ui-text-primary) 5%, transparent); }
-.tb-root .tb-tasks { padding:calc(var(--tb-space) * 6); gap:calc(var(--tb-space) * 4); }
+.tb-root button:focus-visible, .tb-root input:focus-visible, .tb-root select:focus-visible, .tb-root summary:focus-visible { outline:2px solid var(--ui-accent); outline-offset:2px; }
+.tb-root .tb-tasks { display:flex; flex-direction:column; gap:calc(var(--tb-space) * 6); min-width:0; padding:calc(var(--tb-space) * 8); }
 .tb-root .tb-page-header { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:calc(var(--tb-space) * 4); }
-.tb-root .tb-eyebrow { color:var(--ui-text-tertiary); font-size:10px; letter-spacing:.14em; }
-.tb-root h1 { font-size:24px; margin:var(--tb-space) 0; }
+.tb-root .tb-eyebrow { color:var(--ui-accent); font-size:10px; letter-spacing:.16em; }
+.tb-root h1 { font-size:24px; font-weight:650; line-height:1.3; margin:calc(var(--tb-space) * 2) 0; }
 .tb-root p { margin:0; color:var(--ui-text-secondary); }
-.tb-root .tb-filters { align-items:center; flex-wrap:wrap; gap:calc(var(--tb-space) * 2); }
-.tb-root .tb-search { display:flex; align-items:center; flex:2 1 180px; min-width:0; gap:var(--tb-space); padding-left:calc(var(--tb-space) * 2); border:1px solid var(--ui-stroke-secondary); border-radius:var(--radius-sm); color:var(--ui-text-tertiary); }
-.tb-root .tb-search input { border:0; width:100%; }
-.tb-root .tb-filters select { flex:1 1 100px; }
-.tb-root .tb-label-manager { padding:0; border:0; position:relative; }
-.tb-root .tb-label-manager summary { padding:calc(var(--tb-space) * 2); }
-.tb-root .tb-label-manager[open] { flex-basis:100%; padding:calc(var(--tb-space) * 3); border:1px solid var(--ui-stroke-secondary); }
-.tb-root .tb-view-toggle { display:flex; border:1px solid var(--ui-stroke-secondary); border-radius:var(--radius-sm); padding:var(--tb-space); }
+.tb-root .tb-primary { padding:calc(var(--tb-space) * 2) calc(var(--tb-space) * 4); }
+.tb-root .tb-filters { display:flex; align-items:center; flex-wrap:wrap; gap:calc(var(--tb-space) * 3); min-width:0; padding-bottom:calc(var(--tb-space) * 5); border-bottom:1px solid var(--ui-stroke-secondary); }
+.tb-root input, .tb-root select { min-width:0; height:36px; padding:calc(var(--tb-space) * 2) calc(var(--tb-space) * 3); border:1px solid var(--ui-stroke-secondary); border-radius:var(--radius-sm); color:var(--ui-text-primary); background:var(--ui-bg-editor); }
+.tb-root input::placeholder { color:var(--ui-text-tertiary); }
+.tb-root .tb-search { display:flex; align-items:center; flex:1 1 220px; min-width:0; gap:var(--tb-space); padding-left:calc(var(--tb-space) * 3); background:var(--ui-bg-editor); border:1px solid var(--ui-stroke-secondary); border-radius:var(--radius-sm); color:var(--ui-text-tertiary); }
+.tb-root .tb-search:focus-within { outline:2px solid var(--ui-accent); outline-offset:2px; }
+.tb-root .tb-search input { border:0; width:100%; background:transparent; outline:none; }
+.tb-root .tb-filters { --tb-control-height:calc(var(--tb-space) * 9); }
+.tb-root .tb-filters > button, .tb-root .tb-filters > select, .tb-root .tb-search, .tb-root .tb-view-toggle { height:var(--tb-control-height); border-radius:var(--radius-sm); }
+.tb-root .tb-filters > button, .tb-root .tb-filters > select { padding-block:0; line-height:16px; }
+.tb-root .tb-search input { height:100%; padding-block:0; line-height:16px; }
+.tb-root .tb-filters select { flex:0 1 auto; max-width:180px; }
+.tb-root .tb-view-toggle { display:flex; align-items:stretch; flex-shrink:0; border-radius:var(--radius-sm); padding:calc(var(--tb-space) * .75); background:var(--tb-surface); }
+.tb-root .tb-view-toggle button { height:100%; padding-block:0; line-height:16px; white-space:nowrap; }
 .tb-root .tb-view-toggle [aria-checked="true"] { background:var(--chrome-action-hover); color:var(--ui-text-primary); }
-.tb-root .tb-task-columns { gap:calc(var(--tb-space) * 4); }
-.tb-root .tb-task-zone { padding:calc(var(--tb-space) * 3); background:var(--tb-surface); border-radius:var(--radius-lg); }
+.tb-root .tb-refresh { width:var(--tb-control-height); height:var(--tb-control-height); padding:0; color:var(--ui-text-secondary); }
+.tb-root .tb-tabs { display:flex; gap:var(--tb-space); }
+.tb-root .tb-tabs [aria-selected="true"] { background:var(--chrome-action-hover); color:var(--ui-text-primary); }
+.tb-root .tb-task-columns { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); align-items:stretch; gap:calc(var(--tb-space) * 5); }
+.tb-root .tb-task-zone { display:flex; flex-direction:column; min-width:0; min-height:420px; padding:calc(var(--tb-space) * 3); border:1px solid transparent; border-radius:var(--radius-lg); background:var(--tb-surface); }
+.tb-root .tb-task-zone.tb-drop-target { border-color:var(--ui-accent); background:color-mix(in srgb, var(--ui-accent) 10%, var(--tb-surface)); }
 .tb-root .tb-column-head, .tb-root .tb-card-top, .tb-root .tb-card-foot { display:flex; align-items:center; gap:calc(var(--tb-space) * 2); min-width:0; }
-.tb-root .tb-column-head { margin-bottom:calc(var(--tb-space) * 3); }
+.tb-root .tb-column-head { margin-bottom:calc(var(--tb-space) * 3); padding:var(--tb-space); }
 .tb-root .tb-column-head > button { margin-left:auto; }
-.tb-root .tb-count { color:var(--ui-text-secondary); background:var(--tb-surface); padding:var(--tb-space) calc(var(--tb-space) * 2); border-radius:var(--radius-sm); }
-.tb-root .tb-task-row { padding:calc(var(--tb-space) * 3); margin-bottom:calc(var(--tb-space) * 2); border:1px solid var(--ui-stroke-secondary); border-radius:var(--radius-md); background:var(--ui-bg-editor); }
-.tb-root .tb-task-title { flex:1; }
-.tb-root .tb-task-note { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; padding:0; margin:calc(var(--tb-space) * 2) 0; }
-.tb-root .tb-task-id { font-family:monospace; background:var(--tb-surface); border-radius:var(--radius-sm); }
-.tb-root .tb-label { background:var(--tb-surface); }
-.tb-root .tb-card-foot { flex-wrap:wrap; margin-top:calc(var(--tb-space) * 3); }
+.tb-root .tb-count { color:var(--ui-text-secondary); background:var(--chrome-action-hover); padding:0 calc(var(--tb-space) * 1.5); border-radius:var(--radius-sm); font-size:11px; }
+.tb-root .tb-task-row { position:relative; min-width:0; padding:calc(var(--tb-space) * 4); margin-bottom:calc(var(--tb-space) * 3); border:1px solid var(--ui-stroke-secondary); border-radius:var(--radius-md); background:var(--ui-bg-editor); }
+.tb-root .tb-task-row:hover { border-color:var(--ui-stroke-primary); }
+.tb-root .tb-task-row[draggable="true"] { cursor:grab; }
+.tb-root .tb-task-row.tb-dragging { opacity:.45; }
+.tb-root .tb-task-row:has(.tb-more[open]) { z-index:1; }
+.tb-root .tb-task-row button { min-width:0; }
+.tb-root .tb-task-title { flex:1; min-width:0; overflow-wrap:anywhere; font-weight:600; font-size:13px; }
+.tb-root .tb-task-note { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; white-space:pre-wrap; overflow-wrap:anywhere; color:var(--ui-text-secondary); margin:calc(var(--tb-space) * 3) 0; }
+.tb-root .tb-labels { display:flex; flex-wrap:wrap; gap:var(--tb-space); min-width:0; }
+.tb-root .tb-task-row .tb-labels:empty { display:none; }
+.tb-root .tb-task-id, .tb-root .tb-label { display:inline-flex; align-items:center; gap:var(--tb-space); min-width:0; max-width:100%; padding:0 calc(var(--tb-space) * 1.5); border-radius:var(--radius-sm); background:var(--tb-surface); font-size:11px; overflow-wrap:anywhere; }
+.tb-root .tb-task-id { font-family:monospace; }
+.tb-root .tb-label-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+.tb-root .tb-card-foot { flex-wrap:wrap; margin-top:calc(var(--tb-space) * 3); padding-top:calc(var(--tb-space) * 2); border-top:1px solid var(--ui-stroke-secondary); }
+.tb-root .tb-card-foot > button { padding-left:0; color:var(--ui-accent); }
 .tb-root time { margin-left:auto; color:var(--ui-text-tertiary); font-size:11px; }
-.tb-root .tb-more { position:relative; }
-.tb-root summary:focus-visible { outline:2px solid var(--ui-accent); outline-offset:2px; }
-.tb-root .tb-more summary { cursor:pointer; list-style:none; padding:var(--tb-space) calc(var(--tb-space) * 2); }
-.tb-root .tb-more-actions { display:flex; flex-wrap:wrap; gap:var(--tb-space); }
-.tb-root .tb-more[open] { flex:1; }
-.tb-root .tb-add-task { width:100%; border:1px dashed var(--ui-stroke-secondary); color:var(--ui-text-secondary); margin-top:calc(var(--tb-space) * 2); }
+.tb-root .tb-more { position:relative; flex-shrink:0; }
+.tb-root .tb-more summary { cursor:pointer; list-style:none; color:var(--ui-text-tertiary); padding:0 calc(var(--tb-space) * 2); border-radius:var(--radius-sm); }
+.tb-root .tb-more summary::-webkit-details-marker { display:none; }
+.tb-root .tb-more summary:hover { background:var(--chrome-action-hover); color:var(--ui-text-primary); }
+.tb-root .tb-more-actions { position:absolute; top:100%; right:0; z-index:2; display:flex; flex-direction:column; min-width:132px; padding:var(--tb-space); border:1px solid var(--ui-stroke-secondary); border-radius:var(--radius-sm); background:var(--popover); color:var(--popover-foreground); box-shadow:var(--shadow-md); }
+.tb-root .tb-more-actions button { justify-content:flex-start; white-space:nowrap; }
+.tb-root .tb-add-task { width:100%; border:1px dashed var(--ui-stroke-secondary); color:var(--ui-text-secondary); margin-top:auto; }
+.tb-root .tb-empty { display:flex; flex:1; flex-direction:column; align-items:center; justify-content:center; gap:calc(var(--tb-space) * 2); text-align:center; padding:calc(var(--tb-space) * 6) calc(var(--tb-space) * 2); color:var(--ui-text-secondary); }
+.tb-root .tb-empty-icon { display:grid; place-items:center; width:40px; height:40px; margin-bottom:calc(var(--tb-space) * 2); border:1px dashed var(--ui-stroke-secondary); border-radius:var(--radius-md); color:var(--ui-accent); font-size:22px; }
+.tb-root .tb-empty p { font-size:11px; }
 .tb-root .tb-task-list .tb-task-row { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr) auto minmax(0,1fr); align-items:center; gap:calc(var(--tb-space) * 3); }
 .tb-root .tb-task-list .tb-task-note { display:none; }
-.tb-root .tb-task-list .tb-card-foot { margin:0; }
+.tb-root .tb-task-list .tb-card-foot { margin:0; padding:0; border:0; }
 .tb-root .tb-list-status { color:var(--ui-text-secondary); }
-@media (max-width:700px) {
-  .tb-root .tb-tasks { padding:calc(var(--tb-space) * 3); }
+.tb-root .tb-alert { padding:calc(var(--tb-space) * 3); border:1px solid var(--ui-stroke-secondary); border-radius:var(--radius-sm); overflow-wrap:anywhere; }
+.tb-root form { display:flex; gap:calc(var(--tb-space) * 2); align-items:center; flex-wrap:wrap; min-width:0; }
+.tb-root form input { flex:1 1 100px; }
+.tb-root .tb-task-form { padding:calc(var(--tb-space) * 4); border:1px solid var(--ui-stroke-secondary); border-radius:var(--radius-md); }
+.tb-root .tb-task-form input, .tb-root .tb-task-form .tb-labels { flex-basis:100%; }
+.tb-root.tb-dialog { width:calc(100vw - 32px); max-width:560px; }
+.tb-root .tb-label-manager { display:flex; flex-direction:column; gap:calc(var(--tb-space) * 4); }
+.tb-root .tb-label-manager form + form { padding-top:calc(var(--tb-space) * 4); border-top:1px solid var(--ui-stroke-secondary); }
+.tb-root .tb-label-manager form > .tb-label { flex-basis:100%; background:transparent; padding:0; }
+.tb-root .tb-label-choice { border:2px solid transparent; border-radius:var(--radius-sm); padding:var(--tb-space); background:transparent; }
+.tb-root .tb-label-choice[aria-pressed="true"] { border-color:var(--ui-accent); }
+.tb-root .tb-palette { display:flex; gap:var(--tb-space); flex-wrap:wrap; }
+.tb-root .tb-palette button { width:24px; height:24px; padding:calc(var(--tb-space) * .5); border:2px solid transparent; border-radius:50%; background:transparent; }
+.tb-root .tb-palette button[aria-pressed="true"] { border-color:var(--ui-text-primary); }
+.tb-root .tb-palette span { display:block; width:100%; height:100%; border-radius:50%; }
+@container (max-width:760px) {
+  .tb-root .tb-tasks { padding:calc(var(--tb-space) * 4); gap:calc(var(--tb-space) * 4); }
+  .tb-root .tb-task-columns { grid-template-columns:1fr; }
+  .tb-root .tb-task-zone { min-height:220px; }
   .tb-root .tb-task-list .tb-task-row { grid-template-columns:minmax(0,1fr) auto; }
   .tb-root .tb-task-list .tb-labels, .tb-root .tb-task-list .tb-card-foot { grid-column:1 / -1; }
 }
-
 `
 const taskBoardStyle = () => jsx('style', { children: taskBoardStyles })
 
@@ -167,6 +163,7 @@ function TasksPage() {
   const [labelEdits, setLabelEdits] = useState({})
   const [newLabel, setNewLabel] = useState('')
   const [newColor, setNewColor] = useState('blue')
+  const [labelsOpen, setLabelsOpen] = useState(false)
   const [editing, setEditing] = useState(null)
   const [draft, setDraft] = useState({ title: '', ref: '', note: '', url: '', labels: [] })
   const [busy, setBusy] = useState(false)
@@ -184,6 +181,7 @@ function TasksPage() {
   }
   const failures = [backendError(query.data, query.error), backendError(null, labelsQuery.error), error && new Error(error)].filter(Boolean)
   const failure = failures.find(item => item.message === staleMessage) || failures[0]
+  const canRenderTasks = !query.isLoading && query.data?.api_version === API_VERSION
   const update = (task, body) => rest('/tasks/' + task.id, { method: 'PATCH', body })
   const edit = (task, status) => {
     setEditing(task?.id || 'new')
@@ -200,7 +198,7 @@ function TasksPage() {
     setLabelEdits(current => { const next = { ...current }; delete next[name]; return next })
   }
   const tasks = [...(query.data?.tasks || [])].sort((a, b) => Number(b.pinned) - Number(a.pinned) || a.order - b.order)
-    .filter(t => (filter === 'all' || t.status === filter) && (!labelFilter || (t.labels || []).includes(labelFilter)) && [t.title, t.ref, t.note].join(' ').toLowerCase().includes(search.toLowerCase()))
+    .filter(t => (view === 'board' || filter === 'all' || t.status === filter) && (!labelFilter || (t.labels || []).includes(labelFilter)) && [t.title, t.ref, t.note].join(' ').toLowerCase().includes(search.toLowerCase()))
   const action = (label, onClick, extra = {}) => jsx(Button, { 'aria-label': label, variant: 'ghost', size: 'sm', disabled: busy, onClick, children: label, ...extra })
   const renderTask = task => jsxs('div', {
           className: cn('tb-task-row', dragging === task.id && 'tb-dragging'), draggable: !busy,
@@ -238,7 +236,11 @@ function TasksPage() {
       jsx('select', { value: labelFilter, 'aria-label': '标签筛选', onChange: e => setLabelFilter(e.target.value), children: [
         jsx('option', { value: '', children: '全部标签' }), ...Object.keys(definitions).map(name => jsx('option', { value: name, children: name }, name))
       ] }),
-      jsxs('details', { className: 'tb-label-manager', children: [jsx('summary', { children: '管理标签' }),
+      jsxs(Dialog, { open: labelsOpen, onOpenChange: setLabelsOpen, children: [
+      jsx(DialogTrigger, { asChild: true, children: action('管理标签', () => setLabelsOpen(true), { variant: 'outline' }) }),
+      labelsOpen ? jsxs(DialogContent, { className: 'tb-root tb-dialog', banner: failure?.message, children: [
+        jsxs(DialogHeader, { children: [jsx(DialogTitle, { children: '管理标签' }), jsx(DialogDescription, { children: '创建标签、调整颜色，或更新现有标签。' })] }),
+        jsxs('div', { className: 'tb-label-manager', children: [
         ...Object.entries(definitions).map(([name, color]) => {
           const value = Object.hasOwn(labelEdits, name) ? labelEdits[name] : { name, color }
           const editLabel = patch => setLabelEdits({ ...labelEdits, [name]: { ...value, ...patch } })
@@ -256,10 +258,11 @@ function TasksPage() {
           await rest('/labels', { method: 'POST', body: { name: newLabel, color: newColor } }); setNewLabel('')
         }) }, children: [jsx('input', { 'aria-label': '新标签名称', value: newLabel, required: true, maxLength: 40, onChange: e => setNewLabel(e.target.value) }),
           palette(newColor, setNewColor), jsx(Button, { type: 'submit', size: 'sm', disabled: busy, children: '添加标签' })] })
-      ] }),
+      ] }), action('完成', () => setLabelsOpen(false), { variant: 'outline' })
+      ] }) : null] }),
       jsxs('div', { className: 'tb-view-toggle', role: 'radiogroup', 'aria-label': '任务视图', children: [['board', '▦ 看板'], ['list', '☰ 列表']].map(([value, label]) => action(label, () => { setView(value); taskStorage.set('view', value) }, { role: 'radio', 'aria-checked': view === value, onKeyDown: e => { if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) { e.preventDefault(); const next = view === 'board' ? 'list' : 'board'; setView(next); taskStorage.set('view', next); e.currentTarget.parentElement.querySelectorAll('[role="radio"]')[next === 'board' ? 0 : 1].focus() } } })) }),
       action('↻', () => run(() => Promise.resolve()), { 'aria-label': '刷新', className: 'tb-refresh' })] }),
-      jsxs('div', { className: 'tb-tabs', role: 'tablist', 'aria-label': '任务状态', children: Object.entries({ all: '全部', ...taskStatus }).map(([value, label]) => action(label, () => setFilter(value), { role: 'tab', 'aria-selected': filter === value })) }),
+      view === 'list' ? jsxs('div', { className: 'tb-tabs', role: 'tablist', 'aria-label': '任务状态', children: Object.entries({ all: '全部', ...taskStatus }).map(([value, label]) => action(label, () => setFilter(value), { role: 'tab', 'aria-selected': filter === value })) }) : null,
       error || failure || query.isError || labelsQuery.isError ? jsx('div', { className: 'tb-alert', role: 'alert', children: failure?.message || error || '加载失败' }) : null,
       editing ? jsxs('form', { className: 'tb-task-form', onSubmit: e => { e.preventDefault(); return run(async () => {
         await rest(editing === 'new' ? '/tasks' : '/tasks/' + editing, { method: editing === 'new' ? 'POST' : 'PATCH', body: draft }); setEditing(null)
@@ -271,9 +274,9 @@ function TasksPage() {
         }, name)) }),
         jsx(Button, { type: 'submit', size: 'sm', disabled: busy, children: '保存' }), action('取消', () => setEditing(null), { type: 'button' })
       ] }) : null,
-      query.isLoading ? jsx('div', { children: '加载任务…' }) : !(query.data?.tasks || []).length ? jsx(EmptyState, { title: '暂无任务' }) : null,
-      (query.data?.tasks || []).length > 0 && view === 'list' ? jsx('div', { className: 'tb-task-list', 'aria-label': '任务列表', children: tasks.map(renderTask) }) : null,
-      (query.data?.tasks || []).length > 0 && view === 'board' ? jsx('div', { className: 'tb-task-columns', children: Object.entries(taskStatus).map(([status, label]) => jsxs('section', {
+      query.isLoading ? jsx('div', { role: 'status', children: '加载任务…' }) : null,
+      canRenderTasks && view === 'list' ? jsx('div', { className: 'tb-task-list', 'aria-label': '任务列表', children: tasks.length ? tasks.map(renderTask) : jsx(EmptyState, { title: search || labelFilter || filter !== 'all' ? '没有匹配的任务' : '暂无任务', description: '调整筛选条件，或新建一个任务。' }) }) : null,
+      canRenderTasks && view === 'board' ? jsx('div', { className: 'tb-task-columns', children: Object.entries(taskStatus).map(([status, label]) => jsxs('section', {
         className: cn('tb-task-zone', dropTarget === status && 'tb-drop-target'), 'aria-label': label,
         onDragOver: e => {
           if (!draggedTask.current || draggedTask.current.status === status || busyRef.current) return
@@ -287,7 +290,11 @@ function TasksPage() {
           if (task && task.status !== status) return run(() => update(task, { status }))
         },
         children: [jsxs('div', { className: 'tb-column-head', children: [jsx('span', { className: 'tb-label-dot', style: { backgroundColor: { todo: labelPalette.gray, doing: labelPalette.blue, done: labelPalette.green }[status] } }), jsx('strong', { children: label }), jsx('span', { className: 'tb-count', children: tasks.filter(t => t.status === status).length }), action('＋', () => edit(null, status), { 'aria-label': '新建' + label + '任务' })] }),
-          !tasks.some(t => t.status === status) ? jsx('div', { className: 'tb-empty', children: '暂无任务' }) : null,
+          !tasks.some(t => t.status === status) ? jsxs('div', { className: 'tb-empty', children: [
+            jsx('span', { className: 'tb-empty-icon', 'aria-hidden': true, children: status === 'done' ? '✓' : '＋' }),
+            jsx('strong', { children: search || labelFilter ? '没有匹配的任务' : status === 'done' ? '完成的每一步，都值得记录' : '这里还没有任务' }),
+            jsx('p', { children: search || labelFilter ? '试试其他关键词或标签。' : status === 'done' ? '完成任务后，会自动收纳到这里。' : '添加一个任务，开始推进你的计划。' })
+          ] }) : null,
           ...tasks.filter(t => t.status === status).map(renderTask), action('＋ 添加任务', () => edit(null, status), { className: 'tb-add-task', 'aria-label': '添加' + label + '任务' })
         ]
       }, status)) }) : null

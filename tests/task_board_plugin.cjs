@@ -66,7 +66,7 @@ function harness(saved = new Map()) {
     window: { addEventListener() {}, removeEventListener() {} },
     ROUTES_AREA: 'routes', SIDEBAR_NAV_AREA: 'nav', PALETTE_AREA: 'palette',
     ...Object.fromEntries(['Badge', 'Button', 'EmptyState', 'ScrollArea', 'Select', 'SelectContent', 'SelectItem',
-      'SelectTrigger', 'SelectValue', 'StatusDot'].map((name) => [name, name]))
+      'SelectTrigger', 'SelectValue', 'StatusDot', 'Dialog', 'DialogTrigger', 'DialogContent', 'DialogHeader', 'DialogTitle', 'DialogDescription'].map((name) => [name, name]))
   })
   const source = fs.readFileSync(path.join(__dirname, '../task-board/desktop/plugin.js'), 'utf8')
     .replace(/^import .*\n/gm, '').replace('export default {', 'globalThis.plugin = {')
@@ -101,7 +101,7 @@ function nodes(node) {
 }
 function text(node) {
   if (Array.isArray(node)) return node.map(text).join(' ')
-  if (node && typeof node === 'object') return text(node.props?.children)
+  if (node && typeof node === 'object') return node.type === 'style' ? '' : text(node.props?.children)
   return node == null ? '' : String(node)
 }
 function button(node, label) {
@@ -129,7 +129,7 @@ test('task page registers route, nav and palette; renders backend data and empty
   assert.match(text(h.renderTasks()), /Ship feature.*remember this.*GH-1234/)
   await h.queries.find(q => q.queryKey[0] === 'task-board-tasks').queryFn()
   assert.equal(h.calls.at(-1)[1], '/tasks')
-  assert.equal(nodes(tasksHarness([]).renderTasks()).find(n => n.type === 'EmptyState').props.title, '暂无任务')
+  assert.equal(nodes(tasksHarness([]).renderTasks()).filter(n => n.type === 'section').length, 3)
 })
 
 test('task status and delete call backend; pin and reorder retain backend ownership', async () => {
@@ -148,7 +148,8 @@ test('task filters and search are client-side, pinned rows sort first', () => {
   const h = tasksHarness([todoTask, { ...todoTask, id: '11', title: 'Finished', note: '', status: 'done', pinned: true }])
   let panel = h.renderTasks()
   assert.match(text(nodes(panel).find(n => n.type === 'section' && n.props['aria-label'] === '已完成')), /Finished/)
-  nodes(panel).find(n => n.props.role === 'tab' && text(n) === '已完成').props.onClick()
+  button(panel, '☰ 列表')()
+  nodes(h.renderTasks()).find(n => n.props.role === 'tab' && text(n) === '已完成').props.onClick()
   panel = h.renderTasks()
   assert.match(text(panel), /Finished/)
   assert.doesNotMatch(text(panel), /Ship feature/)
@@ -319,6 +320,7 @@ test('colored labels roundtrip in task form and combine with status and search',
   assert.equal(nodes(row(h.renderTasks())[0]).find(n => n.props.className === 'tb-label-dot').props.style.backgroundColor, 'var(--ui-red)')
   nodes(h.renderTasks()).find(n => n.props['aria-label'] === '标签筛选').props.onChange({ target: { value: 'bug' } })
   assert.equal(row(h.renderTasks()).length, 2)
+  button(h.renderTasks(), '☰ 列表')()
   nodes(h.renderTasks()).find(n => n.props.role === 'tab' && text(n) === '待办').props.onClick()
   nodes(h.renderTasks()).find(n => n.props.type === 'search').props.onChange({ target: { value: 'REMEMBER' } })
   assert.equal(row(h.renderTasks()).length, 1)
@@ -336,6 +338,7 @@ test('colored labels roundtrip in task form and combine with status and search',
 test('label manager renders eight palette colors and calls create rename color and delete APIs', async () => {
   const h = tasksHarness()
   h.results['task-board-labels'].data.labels = { bug: 'red' }
+  button(h.renderTasks(), '管理标签')()
   const form = name => nodes(h.renderTasks()).find(n => n.type === 'form' && n.props['aria-label'] === name)
   const colors = nodes(form('新建标签')).filter(n => n.type === 'button')
   assert.equal(colors.length, 8)
@@ -357,6 +360,7 @@ test('label manager supports names that collide with Object prototype keys', asy
   for (const name of ['constructor', 'toString', '__proto__']) {
     const h = tasksHarness()
     h.results['task-board-labels'].data.labels = JSON.parse('{"' + name + '":"blue"}')
+    button(h.renderTasks(), '管理标签')()
     const form = () => nodes(h.renderTasks()).find(n => n.type === 'form' && n.props['aria-label'] === '管理标签 ' + name)
     assert.equal(nodes(form()).find(n => n.type === 'input').props.value, name)
     assert.equal(nodes(form()).find(n => n.props['aria-label'] === 'blue').props['aria-pressed'], true)
@@ -381,26 +385,121 @@ test('labels 404 shows actionable stale banner without raw JSON and keeps consol
   assert.equal(h.calls.find(c => c[0] === 'console.error')[3].message, raw)
 })
 
-test('tasks API version mismatch or absent version shows stale banner; matching version stays normal', async () => {
-  for (const version of [undefined, 0, 2]) {
-    const h = tasksHarness()
-    h.rest = async () => ({ api_version: version, tasks: [] })
+test('labels-only failure keeps loaded tasks visible in board and list with fallback label colors', async () => {
+  for (const view of ['board', 'list']) {
+    const h = tasksHarness([{ ...todoTask, labels: ['bug'] }])
     h.renderTasks()
-    await assert.rejects(h.queries.find(q => q.queryKey[0] === 'task-board-tasks').queryFn(), /后端为旧版本/)
-    h.results['task-board-tasks'].data.api_version = version
-    assert.match(text(nodes(h.renderTasks()).find(n => n.props.role === 'alert')), /需重启\/重载网关后生效/)
+    h.rest = async () => { throw new Error('503: labels unavailable') }
+    let failure
+    try { await h.queries.find(q => q.queryKey[0] === 'task-board-labels').queryFn() } catch (error) { failure = error }
+    assert.equal(failure?.message, '503: labels unavailable')
+    h.results['task-board-labels'] = { isError: true, error: failure }
+    if (view === 'list') button(h.renderTasks(), '☰ 列表')()
+    const panel = h.renderTasks()
+    assert.equal(text(nodes(panel).find(n => n.props.role === 'alert')), failure.message)
+    const row = nodes(panel).find(n => n.props.className === 'tb-task-row')
+    assert.ok(row, view + ' retains the loaded task')
+    assert.match(text(row), /Ship feature.*bug/)
+    assert.equal(nodes(row).find(n => n.props.className === 'tb-label-dot').props.style.backgroundColor, 'var(--ui-text-tertiary)')
+    assert.equal(nodes(panel).filter(n => n.type === 'section').length, view === 'board' ? 3 : 0)
+    assert.equal(h.calls.find(c => c[0] === 'console.error')[1], 'Task Board request failed:')
   }
+})
+
+test('labels recover through refresh without losing task filters or hiding cached tasks', async () => {
+  for (const view of ['board', 'list']) {
+    const h = tasksHarness([{ ...todoTask, labels: ['bug'] }, { ...todoTask, id: '11', title: 'Other', labels: ['docs'] }])
+    h.results['task-board-labels'].data.labels = { bug: 'red', docs: 'blue' }
+    if (view === 'list') button(h.renderTasks(), '☰ 列表')()
+    nodes(h.renderTasks()).find(n => n.props['aria-label'] === '标签筛选').props.onChange({ target: { value: 'bug' } })
+    nodes(h.renderTasks()).find(n => n.props.type === 'search').props.onChange({ target: { value: 'Ship' } })
+    const labels = h.results['task-board-labels']
+    labels.error = new Error('503: labels unavailable'); labels.isError = true
+    let panel = h.renderTasks()
+    assert.match(text(panel), /Ship feature/)
+    assert.doesNotMatch(text(panel), /Other/)
+    const dot = panel => nodes(nodes(panel).find(n => n.props.className === 'tb-task-row')).find(n => n.props.className === 'tb-label-dot')
+    assert.equal(dot(panel).props.style.backgroundColor, 'var(--ui-red)', 'cached label metadata remains usable')
+    h.rest = async url => {
+      assert.equal(url, '/labels')
+      return { labels: { bug: 'teal', docs: 'blue' } }
+    }
+    labels.refetch = async () => {
+      labels.data = await h.queries.find(q => q.queryKey[0] === 'task-board-labels').queryFn()
+      labels.error = null; labels.isError = false
+    }
+    await nodes(panel).find(n => n.props['aria-label'] === '刷新').props.onClick()
+    panel = h.renderTasks()
+    assert.equal(nodes(panel).some(n => n.props.role === 'alert'), false)
+    assert.equal(nodes(panel).filter(n => n.props.className === 'tb-task-row').length, 1)
+    assert.equal(dot(panel).props.style.backgroundColor, 'var(--ui-cyan)')
+    assert.equal(nodes(panel).find(n => n.props['aria-label'] === '标签筛选').props.value, 'bug')
+    assert.equal(nodes(panel).find(n => n.props.type === 'search').props.value, 'Ship')
+  }
+})
+
+test('cached tasks remain visible after a failed refetch in board and list, then recover', async () => {
+  for (const view of ['board', 'list']) {
+    const h = tasksHarness()
+    if (view === 'list') button(h.renderTasks(), '☰ 列表')()
+    const query = h.results['task-board-tasks']
+    let unavailable = true
+    h.rest = async () => {
+      if (unavailable) throw new Error('503: tasks unavailable')
+      return { api_version: 1, tasks: [{ ...todoTask, title: 'Recovered task' }] }
+    }
+    query.refetch = async () => {
+      try {
+        query.data = await h.queries.find(q => q.queryKey[0] === 'task-board-tasks').queryFn()
+        query.error = null; query.isError = false
+      } catch (error) { query.error = error; query.isError = true }
+    }
+    await nodes(h.renderTasks()).find(n => n.props['aria-label'] === '刷新').props.onClick()
+    let panel = h.renderTasks()
+    assert.equal(text(nodes(panel).find(n => n.props.role === 'alert')), '503: tasks unavailable')
+    assert.match(text(panel), /Ship feature/, view + ' retains cached tasks after refetch failure')
+    assert.equal(nodes(panel).filter(n => n.props.className === 'tb-task-row').length, 1)
+    unavailable = false
+    await nodes(panel).find(n => n.props['aria-label'] === '刷新').props.onClick()
+    panel = h.renderTasks()
+    assert.match(text(panel), /Recovered task/)
+    assert.doesNotMatch(text(panel), /Ship feature/)
+    assert.equal(nodes(panel).some(n => n.props.role === 'alert'), false)
+  }
+})
+
+test('tasks API version mismatch or absent version shows stale banner; matching version stays normal', async () => {
+  for (const view of ['board', 'list']) {
+    for (const version of [undefined, 0, 2]) {
+      const h = tasksHarness()
+      if (view === 'list') button(h.renderTasks(), '☰ 列表')()
+      h.rest = async () => ({ api_version: version, tasks: [] })
+      h.renderTasks()
+      await assert.rejects(h.queries.find(q => q.queryKey[0] === 'task-board-tasks').queryFn(), /后端为旧版本/)
+      h.results['task-board-tasks'].data.api_version = version
+      h.results['task-board-tasks'].error = new Error('503: tasks unavailable')
+      const panel = h.renderTasks()
+      assert.match(text(nodes(panel).find(n => n.props.role === 'alert')), /需重启\/重载网关后生效/)
+      assert.doesNotMatch(text(panel), /Ship feature/)
+      assert.equal(nodes(panel).some(n => n.props.className === 'tb-task-columns' || n.props.className === 'tb-task-list'), false)
+    }
+  }
+  const failed = tasksHarness()
+  failed.results['task-board-tasks'] = { isError: true, error: new Error('503: tasks unavailable') }
+  const panel = failed.renderTasks()
+  assert.equal(text(nodes(panel).find(n => n.props.role === 'alert')), '503: tasks unavailable')
+  assert.equal(nodes(panel).some(n => n.props.className === 'tb-task-columns' || n.props.className === 'tb-task-list'), false)
   assert.equal(nodes(tasksHarness().renderTasks()).some(n => n.props.role === 'alert'), false)
 })
 
-test('mutation 404 uses shared stale notice and empty board replaces all columns', async () => {
+test('mutation 404 uses shared stale notice and empty board retains all columns', async () => {
   const h = tasksHarness()
   h.rest = async () => { throw Object.assign(new Error('Not Found'), { status: 404 }) }
   await button(h.renderTasks(), '删除')()
   assert.match(text(nodes(h.renderTasks()).find(n => n.props.role === 'alert')), /后端为旧版本/)
   const empty = tasksHarness([]).renderTasks()
-  assert.equal(nodes(empty).filter(n => n.type === 'EmptyState').length, 1)
-  assert.equal(nodes(empty).filter(n => n.type === 'section').length, 0)
+  assert.equal(nodes(empty).filter(n => n.type === 'EmptyState').length, 0)
+  assert.equal(nodes(empty).filter(n => n.type === 'section').length, 3)
   const panel = tasksHarness().renderTasks()
   assert.equal(nodes(panel).filter(n => n.type === 'section').length, 3)
   assert.equal(nodes(panel).find(n => n.props['aria-label'] === '刷新').props.children, '↻')
@@ -443,6 +542,51 @@ test('list shares task filters and actions and saves view for a fresh page mount
   assert.equal(nodes(fresh.render(fresh.api.TasksPage)).find(n => n.props.role === 'radio' && text(n) === '☰ 列表').props['aria-checked'], true)
   button(fresh.render(fresh.api.TasksPage), '▦ 看板')()
   assert.equal(fresh.saved.get('view'), 'board')
+})
+
+test('label manager keeps its asChild trigger mounted when opened and closed, without writes or lost filters', () => {
+  const h = tasksHarness()
+  let panel = h.renderTasks()
+  const assertTrigger = panel => {
+    const dialog = nodes(panel).find(n => n.type === 'Dialog')
+    assert.ok(dialog, 'dialog root stays mounted for focus restoration')
+    const trigger = nodes(dialog).find(n => n.type === 'DialogTrigger')
+    assert.ok(trigger, 'manage labels is registered as the dialog trigger')
+    assert.equal(trigger.props.asChild, true)
+    assert.equal(trigger.props.children.type, 'Button')
+    assert.equal(text(trigger), '管理标签')
+    return dialog
+  }
+  assert.equal(assertTrigger(panel).props.open, false)
+  assert.equal(nodes(panel).some(n => n.type === 'DialogContent'), false)
+  nodes(panel).find(n => n.props.type === 'search').props.onChange({ target: { value: 'Ship' } })
+  button(h.renderTasks(), '管理标签')()
+  panel = h.renderTasks()
+  assert.equal(assertTrigger(panel).props.open, true)
+  assert.equal(nodes(panel).find(n => n.type === 'DialogTitle').props.children, '管理标签')
+  button(panel, '完成')()
+  assert.equal(assertTrigger(h.renderTasks()).props.open, false)
+  assert.equal(nodes(h.renderTasks()).some(n => n.type === 'DialogContent'), false)
+  assertTrigger(h.renderTasks()).props.onOpenChange(true)
+  assert.equal(assertTrigger(h.renderTasks()).props.open, true)
+  assertTrigger(h.renderTasks()).props.onOpenChange(false)
+  assert.equal(assertTrigger(h.renderTasks()).props.open, false)
+  assert.equal(nodes(h.renderTasks()).find(n => n.props.type === 'search').props.value, 'Ship')
+  assert.equal(h.calls.length, 0)
+})
+
+test('list status filter never silently hides board columns and empty searches explain results', () => {
+  const h = tasksHarness([todoTask, { ...todoTask, id: '11', title: 'Finished', status: 'done' }])
+  button(h.renderTasks(), '☰ 列表')()
+  nodes(h.renderTasks()).find(n => n.props.role === 'tab' && text(n) === '已完成').props.onClick()
+  assert.doesNotMatch(text(h.renderTasks()), /Ship feature/)
+  button(h.renderTasks(), '▦ 看板')()
+  assert.match(text(h.renderTasks()), /Ship feature/)
+  assert.equal(nodes(h.renderTasks()).filter(n => n.props.role === 'tab').length, 0)
+  nodes(h.renderTasks()).find(n => n.props.type === 'search').props.onChange({ target: { value: 'missing' } })
+  assert.equal(nodes(h.renderTasks()).filter(n => n.props.className === 'tb-empty').length, 3)
+  button(h.renderTasks(), '☰ 列表')()
+  assert.equal(nodes(h.renderTasks()).find(n => n.type === 'EmptyState').props.title, '没有匹配的任务')
 })
 
 test('doing primary completes directly without launching a session', async () => {
