@@ -3,12 +3,30 @@ import json
 import unittest
 from unittest.mock import patch
 
-from dashboard import plugin_api as api
-import test_plugin_api as fixtures
+import importlib.util
+import os
+import tempfile
+from pathlib import Path
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+spec = importlib.util.spec_from_file_location("task_board_api", Path(__file__).parents[1] / "task-board/dashboard/plugin_api.py")
+api = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(api)
 
 
 class TasksTests(unittest.TestCase):
-    setUp = fixtures.PluginApiTests.setUp
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.home = Path(temp.name)
+        env = patch.dict(os.environ, {"HERMES_HOME": str(self.home)})
+        env.start()
+        self.addCleanup(env.stop)
+        app = FastAPI()
+        app.include_router(api.router)
+        self.client = TestClient(app)
+        self.addCleanup(self.client.close)
 
     def create(self, title='任务', **fields):
         result = self.client.post('/tasks', json={'title': title, **fields})
@@ -17,10 +35,12 @@ class TasksTests(unittest.TestCase):
 
     def test_crud_persistence_and_non_reused_identity(self):
         self.assertEqual(self.client.get('/tasks').json(), {'tasks': []})
-        task = self.create(task_id='ZT-1234', note='note', zentao_url='https://zentao.example/task/1234')
+        task = self.create(ref='GH-12', note='note', url='https://github.com/example/repo/issues/12')
+        self.assertEqual(task['ref'], 'GH-12')
+        self.assertEqual(task['url'], 'https://github.com/example/repo/issues/12')
         self.assertEqual(task['status'], 'todo')
         self.assertEqual(task['created_at'], task['updated_at'])
-        path = self.home / 'dev-board/tasks.json'
+        path = self.home / 'task-board/tasks.json'
         self.assertEqual(json.loads(path.read_text())['tasks'], [task])
         edited = self.client.patch('/tasks/' + task['id'], json={'title': ' edited ', 'pinned': True, 'status': 'done',
             'session_id': 'stored', 'session_profile': 'dev'}).json()
@@ -34,10 +54,26 @@ class TasksTests(unittest.TestCase):
         for method in ('patch', 'delete'):
             self.assertEqual(getattr(self.client, method)('/tasks/missing', **({'json': {}} if method == 'patch' else {})).status_code, 404)
 
+    def test_legacy_keys_migrate_on_load_and_only_new_keys_are_written(self):
+        task = self.create('fix login', ref='GH-12', url='https://github.com/example/repo/issues/12')
+        path = api._tasks_file()
+        for old_ref in ('task_id', 'zentao_id'):
+            data = json.loads(path.read_text())
+            row = data['tasks'][0]
+            row[old_ref] = row.pop('ref')
+            row['zentao_url'] = row.pop('url')
+            path.write_text(json.dumps(data))
+            self.assertEqual(self.client.get('/tasks').json()['tasks'], [task])
+            result = self.client.patch('/tasks/' + task['id'], json={'note': 'migrated'})
+            self.assertEqual(result.status_code, 200)
+            task = result.json()
+            self.assertEqual(json.loads(path.read_text())['tasks'], [task])
+            self.assertFalse({'task_id', 'zentao_id', 'zentao_url'} & task.keys())
+
     def test_validation_does_not_write(self):
         for body in [{}, {'title': ''}, {'title': '  '}, {'title': 12}, {'title': 'x', 'note': None},
                      {'title': 'x', 'status': 'other'}, {'title': 'x', 'pinned': 1}, {'title': 'x', 'order': 0},
-                     {'title': 'x', 'zentao_url': 'javascript:alert(1)'}, {'title': 'x', 'zentao_url': 'https://user:secret@host'}]:
+                     {'title': 'x', 'url': 'javascript:alert(1)'}, {'title': 'x', 'url': 'https://user:secret@host'}]:
             self.assertEqual(self.client.post('/tasks', json=body).status_code, 400, body)
         self.assertFalse(api._tasks_file().exists())
         task = self.create()
@@ -83,3 +119,21 @@ class TasksTests(unittest.TestCase):
             rows = list(pool.map(lambda i: self.create(str(i)), range(15)))
         self.assertEqual(len({row['id'] for row in rows}), 15)
         self.assertEqual(len(self.client.get('/tasks').json()['tasks']), 15)
+
+    def test_legacy_storage_migrates_once_and_new_store_wins(self):
+        task = self.create('legacy', session_id='stored', session_profile='dev')
+        path = api._tasks_file()
+        legacy = self.home / 'dev-board/tasks.json'
+        legacy.parent.mkdir()
+        path.rename(legacy)
+        self.assertEqual(self.client.get('/tasks').json()['tasks'], [task])
+        self.assertFalse(legacy.exists())
+        legacy.write_text('obsolete')
+        self.assertEqual(self.client.get('/tasks').json()['tasks'], [task])
+        self.assertEqual(legacy.read_text(), 'obsolete')
+        self.client.delete('/tasks/' + task['id'])
+        self.assertEqual(self.client.get('/tasks').json()['tasks'], [])
+
+    def test_dev_board_has_no_task_crud_routes(self):
+        from dashboard import plugin_api as dev_api
+        self.assertFalse(any(route.path.startswith('/tasks') for route in dev_api.router.routes))

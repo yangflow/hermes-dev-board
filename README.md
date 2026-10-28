@@ -139,12 +139,23 @@ view continue to work alongside reviews.
 
 ## Task list
 
-Open **任务清单** beside Dev Board in the sidebar, or run **Dev Board：任务清单**
+This repository provides two independent plugins: Dev Board (worktree board/dock, reviews and editor opening) and Task Board (`task-board`), each with one sidebar entry. The Dev Board installation above is unchanged. To install task-board:
+
+```bash
+mkdir -p ~/.hermes/desktop-plugins/task-board ~/.hermes/plugins/task-board
+cp task-board/desktop/plugin.js ~/.hermes/desktop-plugins/task-board/
+cp -r task-board/dashboard ~/.hermes/plugins/task-board/
+```
+
+Append `task-board` to the gateway config's existing `plugins.enabled` list, preserving other entries, then restart the gateway and Desktop. Dev Board need not be enabled.
+On first read, if the new store is absent and `$HERMES_HOME/dev-board/tasks.json` exists, the backend moves the old file to the new path once. Existing new storage takes precedence. Dev Board no longer reads or writes task storage; its review-link storage stays unchanged.
+
+Open the standalone **Task Board** sidebar entry, or run **Task Board：打开任务清单**
 from the command palette (`/tasks`). This is a simple TODO list: create/edit a required title,
-optional ticket ID, note and Zentao URL; cycle status through todo → doing → done → todo,
+optional external reference (`ref`), note and tracker link (`url`); cycle status through todo → doing → done → todo,
 delete, pin, or move rows up/down within their pinned/unpinned group. Pinned tasks appear first.
 The All / Todo / Doing / Done tabs and search (title, ID and note) filter locally.
-Zentao links open in the system browser; no ticket fetching or cron ingestion occurs.
+Tracker links open in the system browser; no ticket fetching or cron ingestion occurs.
 
 **开始会话** creates a real session on the current gateway profile using the supported
 `session.create({title})` RPC, then opens it with `host.openSession`. Unlike `host.newChat`,
@@ -153,17 +164,18 @@ The task stores its session ID/profile and becomes doing after opening succeeds;
 clicks offer **打开会话** and reuse that session. Completing/deleting a task does not delete its chat.
 Editing a task does not rename its linked session.
 
-Session titles are `PREFIX-id title`: a ticket ID such as `GH-1234` is preserved, a numeric
-ID such as `1234` becomes `ZT-1234`, and other/absent IDs use `Task-<local task id>`.
-This follows the default `DEV_BOARD_TITLE_RE`; the numeric part links to worktrees with the
-same task suffix on Dev Board. Custom title regexes must also match these generated labels.
+Session titles use `${ref} ${title}` when `ref` is set, otherwise just the title.
+References are free-form strings (for example `GH-12`, `ZT-1234`, or `JIRA-100`); no tracker parsing occurs.
+Both plugins can be installed,
+enabled and removed independently, without API calls, imports or configuration references to each other.
 No worktree is created automatically.
 
-Canonical data lives in `$HERMES_HOME/dev-board/tasks.json`, owned by the gateway backend,
+Canonical data lives in `$HERMES_HOME/task-board/tasks.json`, owned by the gateway backend,
 not desktop storage. CRUD and reorder use `ctx.rest` and the plugin's FastAPI routes
 (`GET/POST /tasks`, `PATCH/DELETE /tasks/{id}`, `POST /tasks/{id}/reorder` with
 `{"direction":"up"}` or `{"direction":"down"}`). Writes use a lock, fsync and atomic replacement;
-invalid/unreadable storage is reported rather than overwritten. The file retains task fields,
+invalid/unreadable storage is reported rather than overwritten. For one release, old `task_id` / `zentao_id` and `zentao_url` keys are accepted on load as `ref` and `url`; values are preserved, and subsequent writes use only the new keys.
+The file retains task fields,
 creation/update timestamps, order, pin state and session linkage across restarts.
 
 ## How it maps tasks

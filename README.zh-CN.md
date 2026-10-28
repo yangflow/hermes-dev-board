@@ -151,25 +151,37 @@ export DEV_BOARD_TITLE_RE='(\d{2,6})'
 
 [MIT](LICENSE)，版权归 yangflow 所有。
 
-## 任务清单
+## Task Board
 
-从 Dev Board 相邻的侧边栏入口 **任务清单**，或命令面板 **Dev Board：任务清单**
-打开 `/tasks`。这是简单 TODO 清单：标题必填，禅道/任务 ID、备注、禅道 URL 可选；
+本仓库提供两个独立插件：Dev Board（跨仓开发板、worktree 面板、代码审阅和编辑器打开）与 Task Board（`task-board`），各自只有一个侧边栏入口。上面的 Dev Board 安装步骤保持不变。安装任务清单：
+
+```bash
+mkdir -p ~/.hermes/desktop-plugins/task-board ~/.hermes/plugins/task-board
+cp task-board/desktop/plugin.js ~/.hermes/desktop-plugins/task-board/
+cp -r task-board/dashboard ~/.hermes/plugins/task-board/
+```
+
+在网关所用配置的 `plugins.enabled` 列表追加 `task-board`，保留其他插件，然后重启网关和 Desktop。只需任务清单时无需启用 Dev Board。
+首次读取时，若新存储不存在且 `$HERMES_HOME/dev-board/tasks.json` 存在，后端会将旧文件移动到新路径；已有新存储优先，迁移不会重复执行。Dev Board 不再读写任务存储。审阅链接仍保存于原来的 Dev Board 存储路径。
+
+从独立的侧边栏入口 **Task Board**，或命令面板 **Task Board：打开任务清单**
+打开 `/tasks`。这是简单 TODO 清单：标题必填，任务编号(ref)、备注、链接(url) 可选；
 点击状态按待办 → 进行中 → 已完成 → 待办切换，支持编辑、删除、置顶及上下移动。
 置顶任务优先显示，上下移动限定在各自置顶/普通组内。全部/待办/进行中/已完成筛选和
-标题、ID、备注搜索均在客户端执行。禅道链接通过系统浏览器打开，不抓取禅道，不接入 cron。
+标题、ID、备注搜索均在客户端执行。链接通过系统浏览器打开，不抓取外部任务，不接入 cron。
 
 **开始会话** 使用当前网关 profile 的 `session.create({title})` RPC 创建真实会话，
 该接口会在打开前持久化标题，再调用 `host.openSession` 打开。`host.newChat` 仅创建草稿，
 不提供所需的标题与会话 ID。任务保存会话 ID/profile，打开成功后标记进行中；后续按钮变为
 **打开会话**，复用已有会话。完成或删除任务不会删除聊天，编辑任务不会重命名关联会话。
 
-会话标题为 `PREFIX-id 标题`：`GH-1234` 等格式原样保留，纯数字 `1234` 转为 `ZT-1234`，
-其他或空 ID 使用 `Task-<本地任务编号>`。它符合默认 `DEV_BOARD_TITLE_RE`，数字部分与
-Dev Board 的 worktree 目录任务号后缀关联；自定义标题正则也需匹配生成的标签。
+会话标题在 ref 非空时为 `${ref} ${title}`，否则仅为标题。ref 是自由格式的外部编号，
+例如 `GH-12`、`ZT-1234` 或 `JIRA-100`，不做任何跟踪系统解析。两个插件可独立安装、启用和卸载，互不调用 API、导入代码或读取对方配置。
 任务清单不会自动创建 worktree。
 
-权威数据由网关后端保存在 `$HERMES_HOME/dev-board/tasks.json`，不使用桌面 storage。
+旧字段 `task_id` / `zentao_id` 和 `zentao_url` 保留一个版本的读取兼容，加载时改为 `ref` 和 `url`，值原样保留；后续写入只保存新字段。
+
+权威数据由网关后端保存在 `$HERMES_HOME/task-board/tasks.json`，不使用桌面 storage。
 前端通过 `ctx.rest` 调用 FastAPI：`GET/POST /tasks`、`PATCH/DELETE /tasks/{id}`，
 以及 `POST /tasks/{id}/reorder`（`{"direction":"up"}` 或 `{"direction":"down"}`）。
 文件保存任务内容、创建/更新时间、顺序、置顶和会话关联，重启后保留；写入使用锁、fsync
