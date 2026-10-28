@@ -8,7 +8,7 @@ const labelChip = (name, color) => jsxs('span', { className: 'tb-label', style: 
 let taskStorage = null
 let taskFetch = null
 let openExternal = null
-const API_VERSION = 1 // Bump when backend routes change.
+const API_VERSION = 2 // Bump when the API contract changes.
 const staleMessage = '后端为旧版本：需重启/重载网关后生效'
 const backendError = (data, error) => data && data.api_version !== API_VERSION || error && (error.status === 404 || error.statusCode === 404 || /^404\b/.test(error.message || '')) ? new Error(staleMessage) : error
 const rest = async (path, options) => {
@@ -62,6 +62,8 @@ const taskBoardStyles = `.tb-root { --tb-space:calc(.25rem * var(--spacing-mul, 
 .tb-root .tb-task-row:hover { border-color:var(--ui-stroke-primary); }
 .tb-root .tb-task-row[draggable="true"] { cursor:grab; }
 .tb-root .tb-task-row.tb-dragging { opacity:.45; }
+.tb-root .tb-task-row.tb-insert-before { box-shadow:0 -3px 0 var(--ui-accent); }
+.tb-root .tb-task-row.tb-insert-after { box-shadow:0 3px 0 var(--ui-accent); }
 .tb-root .tb-task-row button { min-width:0; }
 .tb-root .tb-card-top > :not(.tb-task-title) { flex-shrink:0; }
 .tb-root .tb-task-title { flex:1; min-width:0; overflow-wrap:anywhere; font-weight:600; font-size:14px; padding:0; border:0; background:transparent; color:var(--ui-text-primary); text-align:left; }
@@ -189,6 +191,8 @@ function TasksPage() {
   const draggedTask = useRef(null)
   const [dragging, setDragging] = useState(null)
   const [dropTarget, setDropTarget] = useState(null)
+  const [insertion, setInsertion] = useState(null)
+  const placementAt = e => e.clientY < e.currentTarget.getBoundingClientRect().top + e.currentTarget.getBoundingClientRect().height / 2 ? 'before' : 'after'
   const run = async (action) => {
     if (busyRef.current) return
     busyRef.current = true; setBusy(true); setError('')
@@ -229,13 +233,30 @@ function TasksPage() {
   }, { className: 'tb-source', title: '打开原地址：' + task.url, children: jsx(Codicon, { name: 'link-external', size: 14, 'aria-hidden': true }) }) : null
   const menuAction = (label, onClick, extra = {}) => jsx(DropdownMenuItem, { asChild: true, disabled: busy, children: action(label, onClick, extra) })
   const renderTask = task => jsxs('div', {
-          className: cn('tb-task-row', dragging === task.id && 'tb-dragging'), draggable: !busy,
+          className: cn('tb-task-row', dragging === task.id && 'tb-dragging', insertion?.id === task.id && 'tb-insert-' + insertion.placement), draggable: !busy,
           onDragStart: e => {
             if (busyRef.current) { e.preventDefault(); return }
             draggedTask.current = task; setDragging(task.id)
             e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', task.id)
           },
-          onDragEnd: () => { draggedTask.current = null; setDragging(null); setDropTarget(null) },
+          onDragEnd: () => { draggedTask.current = null; setDragging(null); setDropTarget(null); setInsertion(null) },
+          onDragOver: e => {
+            const source = draggedTask.current
+            if (!source || busyRef.current || source.status !== task.status) return
+            e.stopPropagation(); setDropTarget(null)
+            if (source.id === task.id || source.pinned !== task.pinned) { setInsertion(null); return }
+            e.preventDefault(); e.dataTransfer.dropEffect = 'move'
+            setInsertion({ id: task.id, placement: placementAt(e) })
+          },
+          onDragLeave: e => { if (!e.currentTarget.contains(e.relatedTarget)) setInsertion(null) },
+          onDrop: e => {
+            const source = draggedTask.current
+            if (!source || source.status !== task.status) return
+            e.preventDefault(); e.stopPropagation()
+            draggedTask.current = null; setDragging(null); setDropTarget(null); setInsertion(null)
+            if (busyRef.current || source.id === task.id || source.pinned !== task.pinned) return
+            return run(() => rest('/tasks/' + source.id + '/reorder', { method: 'POST', body: { target_id: task.id, placement: placementAt(e) } }))
+          },
           children: [
           jsxs('div', { className: 'tb-card-top', children: [jsx('button', { type: 'button', className: 'tb-task-title', 'aria-label': '查看任务 ' + task.title, onClick: event => { rememberFocus(event); setSelectedId(task.id) }, children: [task.pinned ? jsx('span', { className: 'tb-pinned', role: 'img', title: '置顶', 'aria-label': '置顶', children: jsx(Codicon, { name: 'pinned', size: 14, 'aria-hidden': true }) }) : null, task.title] }),
             jsxs(DropdownMenu, { onOpenChange: open => { if (open) menuDialog.current = false }, children: [jsx(DropdownMenuTrigger, { asChild: true, children: action('任务操作', event => { menuDialog.current = false; rememberFocus(event) }, { 'aria-label': '任务操作 ' + task.title, className: 'tb-more', children: jsx(Codicon, { name: 'ellipsis', size: 14, 'aria-hidden': true }), onPointerDown: rememberFocus, onKeyDown: rememberFocus }) }), jsxs(DropdownMenuContent, { className: 'tb-root tb-menu', align: 'end', onCloseAutoFocus: event => { if (menuDialog.current) { event.preventDefault(); menuDialog.current = false } }, children: [
@@ -243,7 +264,6 @@ function TasksPage() {
             menuAction('编辑', () => edit(task)), menuAction('删除', () => { menuDialog.current = true; setDeleting(task) }),
             menuAction(task.pinned ? '取消置顶' : '置顶', () => run(() => update(task, { pinned: !task.pinned }))),
             menuAction(taskStatus[task.status], () => run(() => update(task, { status: { todo: 'doing', doing: 'done', done: 'todo' }[task.status] })), { 'aria-label': '切换状态 ' + task.title }),
-            ...[['↑', 'up'], ['↓', 'down']].map(([label, direction]) => menuAction(label, () => run(() => rest('/tasks/' + task.id + '/reorder', { method: 'POST', body: { direction } })), { 'aria-label': (direction === 'up' ? '上移 ' : '下移 ') + task.title }))
           ] })] }), sourceAction(task)] }),
           task.note ? jsx('div', { className: 'tb-task-note', children: task.note }) : null,
           jsxs('div', { className: 'tb-labels', children: [
@@ -323,13 +343,13 @@ function TasksPage() {
         className: cn('tb-task-zone', dropTarget === status && 'tb-drop-target'), 'aria-label': label,
         onDragOver: e => {
           if (!draggedTask.current || draggedTask.current.status === status || busyRef.current) return
-          e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDropTarget(status)
+          e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDropTarget(status); setInsertion(null)
         },
         onDragLeave: e => { if (!e.currentTarget.contains(e.relatedTarget)) setDropTarget(null) },
         onDrop: e => {
           e.preventDefault()
           const task = draggedTask.current
-          draggedTask.current = null; setDragging(null); setDropTarget(null)
+          draggedTask.current = null; setDragging(null); setDropTarget(null); setInsertion(null)
           if (task && task.status !== status) return run(() => update(task, { status }))
         },
         children: [jsxs('div', { className: 'tb-column-head', children: [jsx('span', { className: 'tb-label-dot', style: { backgroundColor: { todo: labelPalette.gray, doing: labelPalette.blue, done: labelPalette.green }[status] } }), jsx('strong', { children: label }), jsx('span', { className: 'tb-count', children: tasks.filter(t => t.status === status).length }), action('＋', event => edit(null, status, event), { 'aria-label': '新建' + label + '任务' })] }),
