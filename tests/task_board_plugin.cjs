@@ -611,7 +611,7 @@ test('task create/edit use dialogs, delete requires confirmation, and failures k
   assert.equal(nodes(h.renderTasks()).find(n => n.type === 'DialogContent').props.banner, 'delete refused')
 })
 
-test('task details edit status, done tasks reopen, and workspace navigation preserves data ownership', async () => {
+test('task details edit status and done tasks reopen without header navigation', async () => {
   const h = tasksHarness([{ ...todoTask, status: 'done' }])
   nodes(h.renderTasks()).find(n => n.props['aria-label'] === '查看任务 Ship feature').props.onClick({})
   assert.equal(text(nodes(h.renderTasks()).find(n => n.type === 'DialogTitle')), 'Ship feature')
@@ -620,8 +620,7 @@ test('task details edit status, done tasks reopen, and workspace navigation pres
   button(h.renderTasks(), '关闭')()
   await button(h.renderTasks(), '↶ 重新打开')()
   assert.equal(h.calls.at(-1)[2].body.status, 'todo')
-  button(h.renderTasks(), '⑂ 仓库视图')()
-  assert.deepEqual(plain(h.calls.at(-1)), ['navigate', '/dev-board'])
+  assert.equal(nodes(h.renderTasks()).some(n => n.props['aria-label'] === '工作区视图'), false)
 })
 
 test('doing primary completes directly without launching a session', async () => {

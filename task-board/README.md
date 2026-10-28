@@ -32,7 +32,7 @@ Both plugins can be installed,
 enabled and removed independently, without API calls, imports or configuration references to each other.
 No worktree is created automatically.
 
-The Hermes-themed UI shares header/navigation and toolbar sizing with Dev Board. Create/edit tasks in a dialog, click a task title for details and status changes, confirm deletion, and reopen completed tasks. Label management uses a separate dialog. The repository-view navigation opens an installed Dev Board; task storage remains separate.
+The Hermes-themed UI shares header styling and toolbar sizing with Dev Board. Create/edit tasks in a dialog, click a task title for details and status changes, confirm deletion, and reopen completed tasks. Label management uses a separate dialog. Both boards open from their own sidebar entries; task storage remains separate.
 
 Canonical data lives in `$HERMES_HOME/task-board/tasks.json`, owned by the gateway backend,
 not desktop storage. CRUD and reorder use `ctx.rest` and the plugin's FastAPI routes

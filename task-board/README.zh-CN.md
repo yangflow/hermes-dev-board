@@ -27,7 +27,7 @@ cp -r task-board/dashboard ~/.hermes/plugins/task-board/
 例如 `GH-12`、`ZT-1234` 或 `JIRA-100`，不做任何跟踪系统解析。两个插件可独立安装、启用和卸载，互不调用 API、导入代码或读取对方配置。
 任务清单不会自动创建 worktree。
 
-界面沿用 Hermes 主题：页头与仓库视图入口、等高工具栏、三列看板和列表。新建/编辑使用弹窗；点击任务标题查看详情和更新状态；删除需确认，已完成任务可重新打开。标签管理为独立弹窗。仓库视图入口打开已安装的 Dev Board，不共享任务存储。
+界面沿用 Hermes 主题：统一页头、等高工具栏、三列看板和列表。新建/编辑使用弹窗；点击任务标题查看详情和更新状态；删除需确认，已完成任务可重新打开。标签管理为独立弹窗。两个面板分别通过侧边栏入口打开，不共享任务存储。
 
 权威数据由网关后端保存在 `$HERMES_HOME/task-board/tasks.json`，不使用桌面 storage。
 前端通过 `ctx.rest` 调用 FastAPI：`GET/POST /tasks`、`PATCH/DELETE /tasks/{id}`，
