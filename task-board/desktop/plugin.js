@@ -75,7 +75,8 @@ const taskBoardStyles = `.tb-root { --tb-space:calc(.25rem * var(--spacing-mul, 
 .tb-root .tb-card-foot { flex-wrap:wrap; margin-top:calc(var(--tb-space) * 3); padding-top:calc(var(--tb-space) * 2); border-top:1px solid var(--ui-stroke-secondary); }
 .tb-root .tb-card-foot > button { padding-left:0; color:var(--ui-accent); }
 .tb-root time { margin-left:auto; color:var(--ui-text-tertiary); font-size:11px; }
-.tb-root .tb-more { padding:0 calc(var(--tb-space) * 2); color:var(--ui-text-tertiary); }
+.tb-root .tb-more, .tb-root .tb-source { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; padding:0; color:var(--ui-text-tertiary); }
+.tb-root .tb-pinned { display:inline-flex; align-items:center; margin-right:var(--tb-space); color:var(--ui-accent); vertical-align:middle; }
 .tb-root.tb-menu { min-width:160px; width:auto; background:var(--ui-bg-elevated); color:var(--ui-text-primary); }
 .tb-root.tb-menu button { justify-content:flex-start; width:100%; white-space:nowrap; }
 .tb-root .tb-add-task { width:100%; border:1px dashed var(--ui-stroke-secondary); color:var(--ui-text-secondary); margin-top:auto; }
@@ -236,8 +237,8 @@ function TasksPage() {
           },
           onDragEnd: () => { draggedTask.current = null; setDragging(null); setDropTarget(null) },
           children: [
-          jsxs('div', { className: 'tb-card-top', children: [jsx('button', { type: 'button', className: 'tb-task-title', 'aria-label': '查看任务 ' + task.title, onClick: event => { rememberFocus(event); setSelectedId(task.id) }, children: task.title }),
-            jsxs(DropdownMenu, { onOpenChange: open => { if (open) menuDialog.current = false }, children: [jsx(DropdownMenuTrigger, { asChild: true, children: action('···', event => { menuDialog.current = false; rememberFocus(event) }, { 'aria-label': '任务操作 ' + task.title, className: 'tb-more', onPointerDown: rememberFocus, onKeyDown: rememberFocus }) }), jsxs(DropdownMenuContent, { className: 'tb-root tb-menu', align: 'end', onCloseAutoFocus: event => { if (menuDialog.current) { event.preventDefault(); menuDialog.current = false } }, children: [
+          jsxs('div', { className: 'tb-card-top', children: [jsx('button', { type: 'button', className: 'tb-task-title', 'aria-label': '查看任务 ' + task.title, onClick: event => { rememberFocus(event); setSelectedId(task.id) }, children: [task.pinned ? jsx('span', { className: 'tb-pinned', role: 'img', title: '置顶', 'aria-label': '置顶', children: jsx(Codicon, { name: 'pinned', size: 14, 'aria-hidden': true }) }) : null, task.title] }),
+            jsxs(DropdownMenu, { onOpenChange: open => { if (open) menuDialog.current = false }, children: [jsx(DropdownMenuTrigger, { asChild: true, children: action('任务操作', event => { menuDialog.current = false; rememberFocus(event) }, { 'aria-label': '任务操作 ' + task.title, className: 'tb-more', children: jsx(Codicon, { name: 'ellipsis', size: 14, 'aria-hidden': true }), onPointerDown: rememberFocus, onKeyDown: rememberFocus }) }), jsxs(DropdownMenuContent, { className: 'tb-root tb-menu', align: 'end', onCloseAutoFocus: event => { if (menuDialog.current) { event.preventDefault(); menuDialog.current = false } }, children: [
             task.status !== 'todo' && !task.session_id && !launchedTasks.has(taskLaunchKey(task)) ? menuAction('开始会话', () => run(() => startTaskSession(task, body => update(task, body)))) : null,
             menuAction('编辑', () => edit(task)), menuAction('删除', () => { menuDialog.current = true; setDeleting(task) }),
             menuAction(task.pinned ? '取消置顶' : '置顶', () => run(() => update(task, { pinned: !task.pinned }))),
@@ -251,8 +252,8 @@ function TasksPage() {
           ] }),
           view === 'list' ? jsx('span', { className: 'tb-list-status', children: taskStatus[task.status] }) : null,
           jsxs('div', { className: 'tb-card-foot', children: [
-            task.status === 'todo' ? action('▷ 开始任务', () => run(() => startTaskSession(task, body => update(task, body)))) : task.status === 'doing' ? action('✓ 标记完成', () => run(() => update(task, { status: 'done' }))) : action('↶ 重新打开', () => run(() => update(task, { status: 'todo' }))),
-            task.status !== 'todo' && (task.session_id || launchedTasks.has(taskLaunchKey(task))) ? action('打开会话', () => run(async () => { const link = launchedTasks.get(taskLaunchKey(task)) || task; await host.openSession(link.session_id, { profile: link.session_profile }) })) : null,
+            task.status === 'todo' ? !(task.session_id || launchedTasks.has(taskLaunchKey(task))) ? action('▷ 开始任务', () => run(() => startTaskSession(task, body => update(task, body)))) : null : task.status === 'doing' ? action('✓ 标记完成', () => run(() => update(task, { status: 'done' }))) : action('↶ 重新打开', () => run(() => update(task, { status: 'todo' }))),
+            (task.session_id || launchedTasks.has(taskLaunchKey(task))) ? action('打开会话', () => run(async () => { const link = launchedTasks.get(taskLaunchKey(task)) || task; await host.openSession(link.session_id, { profile: link.session_profile }) })) : null,
             jsx('time', { dateTime: task.updated_at || task.created_at, children: relativeTime(task.updated_at || task.created_at) })
           ] })
         ] }, task.id)
