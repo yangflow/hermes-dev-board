@@ -76,7 +76,7 @@ function harness(saved = new Map()) {
     unload() { cleanups.forEach((fn) => fn()) },
     rest: async (url, options) => {
       calls.push(['rest', url, options])
-      return url === '/tasks' && !options ? { api_version: 2, tasks: [] } : { ok: true }
+      return url === '/tasks' && !options ? { api_version: 3, tasks: [] } : { ok: true }
     },
     render(fn, props) {
       let node, rounds = 0
@@ -115,7 +115,7 @@ const todoTask = { id: '10', title: 'Ship feature', ref: 'GH-1234', note: 'remem
 function tasksHarness(tasks = [todoTask]) {
   const h = harness()
   h.results['task-board-labels'] = { data: { labels: {} }, refetch: async () => {} }
-  h.results['task-board-tasks'] = { data: { api_version: 2, tasks }, refetch: async () => {} }
+  h.results['task-board-tasks'] = { data: { api_version: 3, tasks }, refetch: async () => {} }
   h.renderTasks = () => h.render(h.api.TasksPage)
   return h
 }
@@ -449,7 +449,7 @@ test('cached tasks remain visible after a failed refetch in board and list, then
     let unavailable = true
     h.rest = async () => {
       if (unavailable) throw new Error('503: tasks unavailable')
-      return { api_version: 2, tasks: [{ ...todoTask, title: 'Recovered task' }] }
+      return { api_version: 3, tasks: [{ ...todoTask, title: 'Recovered task' }] }
     }
     query.refetch = async () => {
       try {
@@ -471,9 +471,9 @@ test('cached tasks remain visible after a failed refetch in board and list, then
   }
 })
 
-test('old v1 backend, mismatched or absent API version shows stale banner; v2 stays normal', async () => {
+test('old v1 backend, mismatched or absent API version shows stale banner; v3 stays normal', async () => {
   for (const view of ['board', 'list']) {
-    for (const version of [undefined, 0, 1, 3]) {
+    for (const version of [undefined, 0, 1, 2, 4]) {
       const h = tasksHarness()
       if (view === 'list') button(h.renderTasks(), '☰ 列表')()
       h.rest = async () => ({ api_version: version, tasks: [] })
@@ -725,7 +725,7 @@ test('pin mutation refreshes marker and pinned-first order in each column and li
     let refreshes = 0
     h.results['task-board-tasks'].refetch = async () => {
       refreshes++
-      h.results['task-board-tasks'].data = { api_version: 2, tasks: stored.map(task => ({ ...task })) }
+      h.results['task-board-tasks'].data = { api_version: 3, tasks: stored.map(task => ({ ...task })) }
     }
     if (view === 'list') button(h.renderTasks(), '☰ 列表')()
     for (const status of ['todo', 'doing', 'done']) {
@@ -822,4 +822,106 @@ test('self and pinned-segment drops do not write; cross-status row bubbles to co
   assert.ok(!drop.stopped)
   await nodes(h.renderTasks()).find(n => n.type === 'section' && n.props['aria-label'] === '进行中').props.onDrop(drop)
   assert.deepEqual(plain(h.calls.at(-1)), ['rest', '/tasks/11', { method: 'PATCH', body: { status: 'doing' } }])
+})
+
+test('four and five ordered custom columns, labels, transitions and drag use config IDs', async () => {
+  for (const count of [4, 5]) {
+    const h = tasksHarness([{ ...todoTask, status: '20' }])
+    const statuses = [
+      { id: 'all', name: '计划', color: 'gray', category: 'todo' },
+      { id: '20', name: '开发中', color: 'blue', category: 'doing' },
+      { id: '3', name: '待审核', color: 'violet', category: 'doing' },
+      ...(count === 5 ? [{ id: 'release', name: '待上线', color: 'amber', category: 'doing' }] : []),
+      { id: 'finished', name: '交付', color: 'green', category: 'done' }
+    ]
+    h.results['task-board-tasks'].data.statuses = statuses
+    let panel = h.renderTasks()
+    assert.deepEqual(nodes(panel).filter(n => n.type === 'section').map(n => n.props['aria-label']), statuses.map(s => s.name))
+    await button(panel, '→ 待审核')()
+    assert.equal(h.calls.at(-1)[2].body.status, '3')
+    h.results['task-board-tasks'].data.tasks[0].status = count === 5 ? 'release' : '3'
+    await button(h.renderTasks(), '✓ 标记完成')()
+    assert.equal(h.calls.at(-1)[2].body.status, 'finished')
+    h.results['task-board-tasks'].data.tasks[0].status = 'finished'
+    await button(h.renderTasks(), '↶ 重新打开')()
+    assert.equal(h.calls.at(-1)[2].body.status, 'all')
+    button(h.renderTasks(), '管理状态')()
+    panel = h.renderTasks()
+    assert.equal(nodes(panel).filter(n => n.type === 'input' && n.props['aria-label']?.startsWith('状态名称')).length, count)
+    await button(panel, '保存状态')()
+    assert.deepEqual(plain(h.calls.at(-1)[2].body.statuses), statuses)
+  }
+})
+
+test('manual sync is optional, polls only running, refetches completion and shows retryable failure', async () => {
+  const h = tasksHarness()
+  assert.doesNotMatch(text(h.renderTasks()), /立即同步/)
+  let tasks = 0, labels = 0, polls = 0
+  h.results['task-board-tasks'].refetch = async () => { tasks++ }
+  h.results['task-board-labels'].refetch = async () => { labels++ }
+  h.results['task-board-sync'] = { data: { available: true, running: false }, refetch: async () => { polls++ } }
+  await button(h.renderTasks(), '立即同步')()
+  assert.equal(h.calls.at(-1)[1], '/sync')
+  assert.equal(polls, 1)
+  const options = h.queries.find(q => q.queryKey[0] === 'task-board-sync')
+  assert.equal(options.refetchInterval({ state: { data: { running: false } } }), false)
+  assert.equal(options.refetchInterval({ state: { data: { running: true } } }), 1000)
+  h.results['task-board-sync'].data.running = true
+  assert.ok(nodes(h.renderTasks()).some(n => n.type === 'Button' && n.props.disabled && text(n).includes('同步中')))
+  const before = tasks
+  h.results['task-board-sync'].data = { available: true, running: false, last_result: { ok: false, message: 'Sync timed out (180s)' } }
+  const panel = h.renderTasks()
+  assert.equal(tasks, before + 1)
+  assert.equal(labels, tasks)
+  assert.match(text(panel), /Sync timed out/)
+  assert.ok(nodes(panel).some(n => n.type === 'Button' && !n.props.disabled && text(n) === '立即同步'))
+})
+
+test('refresh retries sync discovery and manager protects removed-status migration targets', async () => {
+  const h = tasksHarness()
+  let retries = 0
+  h.results['task-board-sync'] = { error: new Error('Discovery failed'), refetch: async () => { retries++ } }
+  await nodes(h.renderTasks()).find(n => n.props['aria-label'] === '刷新').props.onClick()
+  assert.equal(retries, 1)
+  button(h.renderTasks(), '管理状态')()
+  let panel = h.renderTasks()
+  nodes(panel).find(n => n.props['aria-label'] === '迁移目标 todo').props.onChange({ target: { value: 'doing' } })
+  panel = h.renderTasks()
+  await nodes(panel).find(n => n.props['aria-label'] === '删除状态 待办').props.onClick()
+  panel = h.renderTasks()
+  assert.equal(nodes(panel).find(n => n.props['aria-label'] === '删除状态 进行中').props.disabled, true)
+})
+
+test('sync keeps polling after POST succeeds and following GET fails with idle cache', async () => {
+  const h = tasksHarness()
+  let tasks = 0, labels = 0
+  h.results['task-board-tasks'].refetch = async () => { tasks++ }
+  h.results['task-board-labels'].refetch = async () => { labels++ }
+  const sync = h.results['task-board-sync'] = { data: { available: true, running: false } }
+  h.rest = async (url, options) => {
+    assert.equal(url, '/sync')
+    if (options?.method === 'POST') return { running: true }
+    throw new Error('GET unavailable')
+  }
+  sync.refetch = async () => {
+    const panel = h.renderTasks()
+    assert.ok(nodes(panel).some(n => n.type === 'Button' && n.props.disabled && text(n).includes('同步中')))
+    const options = h.queries.at(-1)
+    try { sync.data = await options.queryFn(); sync.error = null }
+    catch (error) { sync.error = error; return { error } }
+  }
+  await button(h.renderTasks(), '立即同步')()
+  h.renderTasks()
+  let options = h.queries.at(-1)
+  assert.equal(options.refetchInterval({ state: { data: sync.data } }), 1000)
+  const before = tasks
+  h.rest = async () => ({ available: true, running: false, last_result: { ok: true, message: 'Sync completed' } })
+  sync.data = await options.queryFn()
+  sync.error = null
+  const panel = h.renderTasks()
+  assert.equal(tasks, before + 1)
+  assert.equal(labels, tasks)
+  options = h.queries.at(-1)
+  assert.equal(options.refetchInterval({ state: { data: sync.data } }), false)
+  assert.ok(nodes(panel).some(n => n.type === 'Button' && !n.props.disabled && text(n) === '立即同步'))
 })
