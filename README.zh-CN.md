@@ -162,7 +162,6 @@ cp -r task-board/dashboard ~/.hermes/plugins/task-board/
 ```
 
 在网关所用配置的 `plugins.enabled` 列表追加 `task-board`，保留其他插件，然后重启网关和 Desktop。只需任务清单时无需启用 Dev Board。
-首次读取时，若新存储不存在且 `$HERMES_HOME/dev-board/tasks.json` 存在，后端会将旧文件移动到新路径；已有新存储优先，迁移不会重复执行。Dev Board 不再读写任务存储。审阅链接仍保存于原来的 Dev Board 存储路径。
 
 从独立的侧边栏入口 **Task Board**，或命令面板 **Task Board：打开任务清单**
 打开 `/tasks`。这是简单 TODO 清单：标题必填，任务编号(ref)、备注、链接(url) 可选；
@@ -178,8 +177,6 @@ cp -r task-board/dashboard ~/.hermes/plugins/task-board/
 会话标题在 ref 非空时为 `${ref} ${title}`，否则仅为标题。ref 是自由格式的外部编号，
 例如 `GH-12`、`ZT-1234` 或 `JIRA-100`，不做任何跟踪系统解析。两个插件可独立安装、启用和卸载，互不调用 API、导入代码或读取对方配置。
 任务清单不会自动创建 worktree。
-
-旧字段 `task_id` / `zentao_id` 和 `zentao_url` 保留一个版本的读取兼容，加载时改为 `ref` 和 `url`，值原样保留；后续写入只保存新字段。
 
 权威数据由网关后端保存在 `$HERMES_HOME/task-board/tasks.json`，不使用桌面 storage。
 前端通过 `ctx.rest` 调用 FastAPI：`GET/POST /tasks`、`PATCH/DELETE /tasks/{id}`，

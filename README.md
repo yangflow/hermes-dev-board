@@ -148,7 +148,6 @@ cp -r task-board/dashboard ~/.hermes/plugins/task-board/
 ```
 
 Append `task-board` to the gateway config's existing `plugins.enabled` list, preserving other entries, then restart the gateway and Desktop. Dev Board need not be enabled.
-On first read, if the new store is absent and `$HERMES_HOME/dev-board/tasks.json` exists, the backend moves the old file to the new path once. Existing new storage takes precedence. Dev Board no longer reads or writes task storage; its review-link storage stays unchanged.
 
 Open the standalone **Task Board** sidebar entry, or run **Task Board：打开任务清单**
 from the command palette (`/tasks`). This is a simple TODO list: create/edit a required title,
@@ -174,8 +173,7 @@ Canonical data lives in `$HERMES_HOME/task-board/tasks.json`, owned by the gatew
 not desktop storage. CRUD and reorder use `ctx.rest` and the plugin's FastAPI routes
 (`GET/POST /tasks`, `PATCH/DELETE /tasks/{id}`, `POST /tasks/{id}/reorder` with
 `{"direction":"up"}` or `{"direction":"down"}`). Writes use a lock, fsync and atomic replacement;
-invalid/unreadable storage is reported rather than overwritten. For one release, old `task_id` / `zentao_id` and `zentao_url` keys are accepted on load as `ref` and `url`; values are preserved, and subsequent writes use only the new keys.
-The file retains task fields,
+invalid/unreadable storage is reported rather than overwritten. The file retains task fields,
 creation/update timestamps, order, pin state and session linkage across restarts.
 
 ## How it maps tasks
