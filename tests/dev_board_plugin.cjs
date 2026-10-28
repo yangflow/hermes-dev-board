@@ -487,28 +487,51 @@ test('all repositories retain identical file paths as distinct selectable identi
   assert.deepEqual(plain(h.queries.findLast((q) => q.queryKey[0] === 'dev-board-diff').queryKey), ['dev-board-diff', '/worktrees/web', 'same.py'])
 })
 
- test('task session action prefers focused profile and selection is explicit', async () => {
+test('one session opens directly and reports open failures; no sessions keep editor action', async () => {
   const h = harness()
-  const other = { ...h.session, id: 'other', profile: 'default' }
+  const render = () => h.render(h.api.TaskCard, { task: { id: '1234', repos: [] } })
+  await button(render(), '打开会话')()
+  assert.deepEqual(plain(h.calls.at(-1)), ['session', 'stored', { profile: 'dev' }])
+  assert.equal(nodes(render()).filter(n => n.type === 'Select').length, 0)
+  h.host.openSession = async () => { throw new Error('profile unavailable') }
+  await button(render(), '打开会话')()
+  assert.match(h.notices.at(-1).message, /打开会话失败：profile unavailable/)
+  h.results['dev-board-sessions'].data.zt_sessions['1234'] = []
+  const card = render()
+  assert.ok(!nodes(card).some(n => n.type === 'Button' && /会话/.test(text(n))))
+  assert.equal(nodes(card).filter(n => n.type === 'Select').length, 0)
+  assert.ok(button(card, '在 VS Code 打开'))
+})
+
+test('single open action toggles full profile session choices without opening a preferred session', async () => {
+  const h = harness()
+  const title = 'A complete session title with a long distinguishing suffix'
+  const other = { ...h.session, profile: undefined, title }
+  h.session.title = title
   h.results['dev-board-sessions'].data.zt_sessions['1234'] = [other, h.session]
   const render = () => h.render(h.api.TaskCard, { task: { id: '1234', repos: [] } })
   let card = render()
   assert.equal(nodes(card).filter(n => n.type === h.api.SessionChip).length, 0)
   assert.equal(nodes(card).filter(n => n.type === 'Select').length, 0)
-  await button(card, '打开会话')()
-  assert.deepEqual(plain(h.calls.at(-1)), ['session', 'stored', { profile: 'dev' }])
-  button(card, '选择会话')()
+  assert.equal(nodes(card).filter(n => n.type === 'Button' && /会话/.test(text(n))).length, 1)
+  button(card, '打开会话')()
   card = render()
-  await nodes(card).find(n => n.type === 'Select').props.onValueChange(JSON.stringify(['default', 'other']))
-  assert.deepEqual(plain(h.calls.at(-1)), ['session', 'other', { profile: 'default' }])
+  assert.equal(h.calls.length, 0)
+  assert.equal(nodes(card).find(n => n.props.title === '打开会话').props['aria-expanded'], true)
+  assert.deepEqual(nodes(card).filter(n => n.type === 'SelectItem').map(text), ['default · ' + title, 'dev · ' + title])
+  button(card, '打开会话')()
   assert.equal(nodes(render()).filter(n => n.type === 'Select').length, 0)
-  h.state.focusedSessionProfile.set('missing')
-  await button(render(), '打开会话')()
-  assert.equal(h.calls.at(-1)[1], 'other')
+  for (const profile of ['default', 'dev']) {
+    button(render(), '打开会话')()
+    await nodes(render()).find(n => n.type === 'Select').props.onValueChange(JSON.stringify([profile, 'stored']))
+    assert.deepEqual(plain(h.calls.at(-1)), ['session', 'stored', { profile }])
+    assert.equal(nodes(render()).filter(n => n.type === 'Select').length, 0)
+  }
   h.host.openSession = async () => { throw new Error('profile unavailable') }
-  await button(render(), '打开会话')()
+  button(render(), '打开会话')()
+  await nodes(render()).find(n => n.type === 'Select').props.onValueChange(JSON.stringify(['dev', 'stored']))
   assert.match(h.notices.at(-1).message, /打开会话失败：profile unavailable/)
- })
+})
  test('stale backend notice explains gateway reload in board and dock', () => {
   for (const version of [undefined, 1, 3]) {
     for (const component of ['BoardPage', 'DockPanel']) {
@@ -675,4 +698,28 @@ test('review fields retain complete titles and distinguish open, merged and draf
   for (const [i, cls, label] of [[0, 'merged', '已合并'], [1, 'open', '待合并'], [2, 'draft', '草稿']]) {
     assert.ok(nodes(rows[i]).some(n => n.props.className === 'db-review-badge db-review-' + cls && text(n).replace(/^▷ /, '').replace(/ ↗$/, '') === label))
   }
+})
+
+
+test('page title keeps intrinsic height in its column heading without changing dock flex', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../dev-board/desktop/plugin.js'), 'utf8')
+  const styles = source.split('const boardStyles = `')[1].split('`')[0]
+  const declarations = selector => Object.fromEntries(styles
+    .slice(styles.indexOf(selector + ' {') + selector.length + 2)
+    .split('}')[0].split(';').filter(rule => rule.trim())
+    .map(rule => rule.trim().split(':').map(part => part.trim())))
+  const heading = declarations('.dev-board.db-page .db-task-heading')
+  const title = declarations('.dev-board.db-page .db-title')
+  assert.equal(heading['flex-direction'], 'column')
+  assert.equal(heading['min-width'], '0')
+  assert.equal(heading.width, '100%')
+  assert.equal(title.flex, '0 0 auto', 'column title must not inherit the global zero flex basis')
+  assert.equal(title.width, '100%')
+  assert.equal(title['min-height'], '1.5em')
+  assert.equal(declarations('.dev-board.db-dock .db-dock-toolbar .db-title').flex, '1 1 0')
+  const h = harness()
+  const card = h.render(h.api.TaskCard, { task: { id: '1234', repos: [] } })
+  const row = nodes(card).find(n => n.props.className === 'db-title')
+  assert.match(text(row), /ZT-1234.*task/)
+  assert.ok(nodes(row).some(n => n.props.className === 'db-ref'))
 })

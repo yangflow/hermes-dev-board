@@ -92,8 +92,8 @@ const boardStyles = `
 .dev-board.db-page .db-card-active { border-color:var(--ui-accent); }
 .dev-board.db-page .db-card-head { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:18px; }
 .dev-board.db-page .db-task-toggle { display:flex; align-items:center; gap:10px; flex:1 1 240px; min-width:0; padding:0; text-align:left; border:0; background:transparent; color:inherit; }
-.dev-board.db-page .db-task-heading { display:flex; flex-direction:column; gap:6px; min-width:0; }
-.dev-board.db-page .db-title { display:block; }
+.dev-board.db-page .db-task-heading { display:flex; flex-direction:column; flex:1 1 auto; width:100%; gap:6px; min-width:0; }
+.dev-board.db-page .db-title { display:block; flex:0 0 auto; width:100%; min-height:1.5em; }
 .dev-board.db-page .db-ref { display:inline-block; padding:2px 5px; border:1px solid var(--ui-stroke-secondary); border-radius:4px; font:11px monospace; color:var(--ui-text-secondary); }
 .dev-board.db-page .db-progress { display:block; width:100px; height:3px; background:var(--ui-stroke-secondary); border-radius:3px; overflow:hidden; }
 .dev-board.db-page .db-progress > span { display:block; height:100%; background:var(--ui-accent); }
@@ -650,14 +650,13 @@ function TaskCard({ task, activeZt, editorName = 'VS Code', expanded = true, onT
       ] }),
       summary.needs ? pill('需要处理', 'warn') : summary.done ? pill('已全部合并', 'good') : summary.known ? pill(summary.pending + ' 个待合并', 'warn') : null,
       jsxs('div', { className: 'db-task-actions', children: [
-        preferred ? jsx(Button, { variant: 'ghost', size: 'sm', title: '打开会话', onClick: () => openTaskSession(preferred), children: '▷ 打开会话' }) : null,
-          chips.length > 1 ? jsx(Button, { variant: 'ghost', size: 'sm', title: '选择会话', onClick: () => setChoosing(!choosing), children: '选择会话' }) : null,
+        preferred ? jsx(Button, { variant: 'ghost', size: 'sm', title: '打开会话', 'aria-expanded': chips.length > 1 ? choosing : undefined, onClick: () => chips.length > 1 ? setChoosing(!choosing) : openTaskSession(preferred), children: '▷ 打开会话' }) : null,
           choosing && chips.length > 1 ? jsx(Select, { value: '', onValueChange: (value) => {
             const s = chips.find((s) => JSON.stringify([s.profile || 'default', s.id]) === value)
             if (s) { setChoosing(false); return openTaskSession(s) }
           }, children: [
             jsx(SelectTrigger, { children: jsx(SelectValue, { placeholder: '选择会话' }) }),
-            jsx(SelectContent, { children: chips.map((s) => jsx(SelectItem, { value: JSON.stringify([s.profile || 'default', s.id]), children: (s.profile || 'default') + ' · ' + s.title }, JSON.stringify([s.profile || 'default', s.id]))) })
+            jsx(SelectContent, { children: chips.map((s) => jsx(SelectItem, { value: JSON.stringify([s.profile || 'default', s.id]), className: 'whitespace-normal break-words', title: (s.profile || 'default') + ' · ' + s.title, children: (s.profile || 'default') + ' · ' + s.title }, JSON.stringify([s.profile || 'default', s.id]))) })
           ] }) : null,
 
         jsx(Button, { variant: 'ghost', size: 'sm', title: '在 ' + editorName + ' 打开', onClick: () => openEditor(task.id, editorName), children: '在 ' + editorName + ' 打开 ↗' })
