@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, HTTPException
 
 router = APIRouter()
-API_VERSION = 1  # Bump when backend routes change.
+API_VERSION = 2  # Bump when the API contract changes.
 
 
 def _task_url(url: str) -> str:
@@ -187,20 +187,38 @@ def delete_task(task_id: str) -> dict:
 
 @router.post("/tasks/{task_id}/reorder")
 def reorder_task(task_id: str, body: dict) -> dict:
-    if body not in ({"direction": "up"}, {"direction": "down"}):
-        raise HTTPException(400, "direction must be up or down")
+    relative = set(body) == {"target_id", "placement"}
+    if relative:
+        if not isinstance(body["target_id"], str) or not body["target_id"].isdigit() or body["placement"] not in ("before", "after"):
+            raise HTTPException(400, "target_id and placement before or after are required")
+    elif body not in ({"direction": "up"}, {"direction": "down"}):
+        raise HTTPException(400, "direction must be up or down, or supply target_id and placement")
     with _tasks_lock:
         data = _tasks_read()
         task = _task_find(data, task_id)
         group = [t for t in data["tasks"] if t["pinned"] == task["pinned"] and t["status"] == task["status"]]
         index = group.index(task)
-        target = index + (-1 if body["direction"] == "up" else 1)
-        if 0 <= target < len(group):
-            other = group[target]
-            a, b = data["tasks"].index(task), data["tasks"].index(other)
-            data["tasks"][a], data["tasks"][b] = other, task
-            now = datetime.now(timezone.utc).isoformat()
-            task["updated_at"] = other["updated_at"] = now
+        if relative:
+            other = _task_find(data, body["target_id"])
+            if other["status"] != task["status"] or other["pinned"] != task["pinned"]:
+                raise HTTPException(400, "tasks must have the same status and pinned segment")
+            if other == task:
+                return {"tasks": data["tasks"]}
+            group.remove(task)
+            target = group.index(other) + (body["placement"] == "after")
+            group.insert(target, task)
+        else:
+            target = index + (-1 if body["direction"] == "up" else 1)
+            if 0 <= target < len(group):
+                group[index], group[target] = group[target], group[index]
+        now = datetime.now(timezone.utc).isoformat()
+        reordered = iter(group)
+        for index, current in enumerate(data["tasks"]):
+            if current["status"] == task["status"] and current["pinned"] == task["pinned"]:
+                replacement = next(reordered)
+                if replacement is not current:
+                    replacement["updated_at"] = now
+                data["tasks"][index] = replacement
         for index, task in enumerate(data["tasks"]):
             task["order"] = index
         _tasks_write(data)

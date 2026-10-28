@@ -83,6 +83,57 @@ class TasksTests(unittest.TestCase):
         self.client.delete('/tasks/' + a['id'])
         self.assertEqual([t['order'] for t in self.client.get('/tasks').json()['tasks']], [0, 1])
 
+    def test_target_reorder_persists_and_isolates_groups(self):
+        a = self.create('visible a')
+        other = self.create('other', status='doing')
+        hidden = self.create('hidden')
+        pin = self.create('pin', pinned=True)
+        b = self.create('visible b')
+        c = self.create('visible c')
+        def move(source, target, placement, expected):
+            result = self.client.post('/tasks/' + source['id'] + '/reorder',
+                                      json={'target_id': target['id'], 'placement': placement})
+            self.assertEqual(result.status_code, 200)
+            stored = json.loads(api._tasks_file().read_text())['tasks']
+            self.assertEqual(result.json()['tasks'], stored)
+            self.assertEqual(self.client.get('/tasks').json()['tasks'], stored)
+            self.assertEqual([t['id'] for t in stored], [t['id'] for t in expected])
+            self.assertEqual([t['order'] for t in stored], list(range(len(stored))))
+            self.assertEqual(stored[1], other)
+            self.assertEqual(stored[3], pin)
+        move(c, a, 'before', [c, other, a, pin, hidden, b])
+        move(c, b, 'after', [a, other, hidden, pin, b, c])
+        move(a, b, 'after', [hidden, other, b, pin, a, c])
+        move(c, b, 'before', [hidden, other, c, pin, b, a])
+        before = api._tasks_file().read_bytes()
+        with patch.object(api, '_tasks_write') as write:
+            self.assertEqual(self.client.post('/tasks/' + a['id'] + '/reorder',
+                json={'target_id': a['id'], 'placement': 'after'}).status_code, 200)
+            write.assert_not_called()
+        for source, body, status in [
+            (a['id'], {'target_id': other['id'], 'placement': 'before'}, 400),
+            (a['id'], {'target_id': pin['id'], 'placement': 'after'}, 400),
+            (a['id'], {'target_id': '999', 'placement': 'before'}, 404),
+            ('999', {'target_id': a['id'], 'placement': 'after'}, 404),
+            (a['id'], {'target_id': [], 'placement': 'before'}, 400),
+            (a['id'], {'target_id': a['id'], 'placement': []}, 400),
+            (a['id'], {'target_id': a['id']}, 400),
+            (a['id'], {'target_id': a['id'], 'placement': 'up'}, 400),
+            (a['id'], {'target_id': a['id'], 'placement': 'before', 'direction': 'up'}, 400),
+        ]:
+            with patch.object(api, '_tasks_write') as write:
+                self.assertEqual(self.client.post('/tasks/' + source + '/reorder', json=body).status_code, status)
+                write.assert_not_called()
+        with patch.object(api.os, 'replace', side_effect=OSError('disk unavailable')):
+            self.assertEqual(self.client.post('/tasks/' + a['id'] + '/reorder',
+                json={'target_id': c['id'], 'placement': 'before'}).status_code, 500)
+        self.assertEqual(api._tasks_file().read_bytes(), before)
+        second_pin = self.create('second pin', pinned=True)
+        result = self.client.post('/tasks/' + second_pin['id'] + '/reorder',
+            json={'target_id': pin['id'], 'placement': 'before'}).json()['tasks']
+        self.assertEqual([t['id'] for t in result if t['pinned']], [second_pin['id'], pin['id']])
+        self.assertTrue(all(t['pinned'] for t in result if t['id'] in (pin['id'], second_pin['id'])))
+
     def test_atomic_failure_and_corrupt_storage(self):
         task = self.create()
         path = api._tasks_file()

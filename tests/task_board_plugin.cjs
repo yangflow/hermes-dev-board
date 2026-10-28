@@ -76,7 +76,7 @@ function harness(saved = new Map()) {
     unload() { cleanups.forEach((fn) => fn()) },
     rest: async (url, options) => {
       calls.push(['rest', url, options])
-      return url === '/tasks' && !options ? { api_version: 1, tasks: [] } : { ok: true }
+      return url === '/tasks' && !options ? { api_version: 2, tasks: [] } : { ok: true }
     },
     render(fn, props) {
       let node, rounds = 0
@@ -115,7 +115,7 @@ const todoTask = { id: '10', title: 'Ship feature', ref: 'GH-1234', note: 'remem
 function tasksHarness(tasks = [todoTask]) {
   const h = harness()
   h.results['task-board-labels'] = { data: { labels: {} }, refetch: async () => {} }
-  h.results['task-board-tasks'] = { data: { api_version: 1, tasks }, refetch: async () => {} }
+  h.results['task-board-tasks'] = { data: { api_version: 2, tasks }, refetch: async () => {} }
   h.renderTasks = () => h.render(h.api.TasksPage)
   return h
 }
@@ -132,16 +132,15 @@ test('task page registers route, nav and palette; renders backend data and empty
   assert.equal(nodes(tasksHarness([]).renderTasks()).filter(n => n.type === 'section').length, 3)
 })
 
-test('task status and delete call backend; pin and reorder retain backend ownership', async () => {
+test('task status, delete and pin call backend; overflow has no reorder arrows', async () => {
   const h = tasksHarness()
   await nodes(h.renderTasks()).find(n => n.props['aria-label'] === '切换状态 Ship feature').props.onClick()
   assert.deepEqual(plain(h.calls.at(-1)), ['rest', '/tasks/10', { method: 'PATCH', body: { status: 'doing' } }])
   await button(h.renderTasks(), '置顶')()
   assert.equal(h.calls.at(-1)[2].body.pinned, true)
-  await button(h.renderTasks(), '↑')()
-  assert.deepEqual(plain(h.calls.at(-1)[2]), { method: 'POST', body: { direction: 'up' } })
+  assert.ok(!nodes(h.renderTasks()).some(n => ['↑', '↓'].includes(text(n))))
   await button(h.renderTasks(), '删除')()
-  assert.equal(h.calls.at(-1)[2].method, 'POST')
+  assert.equal(h.calls.at(-1)[2].method, 'PATCH')
   await button(h.renderTasks(), '确认删除')()
   assert.deepEqual(plain(h.calls.at(-1)), ['rest', '/tasks/10', { method: 'DELETE' }])
 })
@@ -450,7 +449,7 @@ test('cached tasks remain visible after a failed refetch in board and list, then
     let unavailable = true
     h.rest = async () => {
       if (unavailable) throw new Error('503: tasks unavailable')
-      return { api_version: 1, tasks: [{ ...todoTask, title: 'Recovered task' }] }
+      return { api_version: 2, tasks: [{ ...todoTask, title: 'Recovered task' }] }
     }
     query.refetch = async () => {
       try {
@@ -472,9 +471,9 @@ test('cached tasks remain visible after a failed refetch in board and list, then
   }
 })
 
-test('tasks API version mismatch or absent version shows stale banner; matching version stays normal', async () => {
+test('old v1 backend, mismatched or absent API version shows stale banner; v2 stays normal', async () => {
   for (const view of ['board', 'list']) {
-    for (const version of [undefined, 0, 2]) {
+    for (const version of [undefined, 0, 1, 3]) {
       const h = tasksHarness()
       if (view === 'list') button(h.renderTasks(), '☰ 列表')()
       h.rest = async () => ({ api_version: version, tasks: [] })
@@ -726,7 +725,7 @@ test('pin mutation refreshes marker and pinned-first order in each column and li
     let refreshes = 0
     h.results['task-board-tasks'].refetch = async () => {
       refreshes++
-      h.results['task-board-tasks'].data = { api_version: 1, tasks: stored.map(task => ({ ...task })) }
+      h.results['task-board-tasks'].data = { api_version: 2, tasks: stored.map(task => ({ ...task })) }
     }
     if (view === 'list') button(h.renderTasks(), '☰ 列表')()
     for (const status of ['todo', 'doing', 'done']) {
@@ -769,4 +768,58 @@ test('linked tasks open existing sessions once without RPC or status writes in b
       assert.equal(h.results['task-board-tasks'].data.tasks[0].status, status)
     }
   }
+})
+
+test('row drag reorders by midpoint in board and filtered list, clears feedback and reports failures', async () => {
+  for (const list of [false, true]) {
+    const a = { ...todoTask, title: 'visible a' }
+    const b = { ...todoTask, id: '12', title: 'visible b', order: 2 }
+    const h = tasksHarness([a, { ...todoTask, id: '11', title: 'hidden', order: 1 }, b])
+    if (list) button(h.renderTasks(), '☰ 列表')()
+    nodes(h.renderTasks()).find(n => n.props.type === 'search').props.onChange({ target: { value: 'visible' } })
+    const rows = () => nodes(h.renderTasks()).filter(n => n.props.draggable === true)
+    assert.equal(rows().length, 2)
+    const event = y => ({ clientY: y, currentTarget: { getBoundingClientRect: () => ({ top: 100, height: 40 }) },
+      dataTransfer: { setData() {} }, preventDefault() { this.prevented = true }, stopPropagation() { this.stopped = true } })
+    for (const [y, placement] of [[110, 'before'], [130, 'after']]) {
+      rows()[0].props.onDragStart(event(y))
+      const over = event(y)
+      rows()[1].props.onDragOver(over)
+      assert.ok(over.prevented && over.stopped)
+      assert.match(rows()[1].props.className, new RegExp('tb-insert-' + placement))
+      const drop = event(y)
+      await rows()[1].props.onDrop(drop)
+      assert.ok(drop.stopped)
+      assert.deepEqual(plain(h.calls.at(-1)), ['rest', '/tasks/10/reorder', { method: 'POST', body: { target_id: '12', placement } }])
+      assert.ok(rows().every(row => !/tb-insert-|tb-dragging/.test(row.props.className)))
+    }
+    h.rest = async () => { throw new Error('reorder failed') }
+    rows()[0].props.onDragStart(event(110))
+    await rows()[1].props.onDrop(event(110))
+    assert.match(text(h.renderTasks()), /reorder failed/)
+    assert.equal(rows().length, 2)
+    assert.ok(rows().every(row => !/tb-insert-|tb-dragging/.test(row.props.className)))
+  }
+})
+
+test('self and pinned-segment drops do not write; cross-status row bubbles to column without changing pin', async () => {
+  const h = tasksHarness([todoTask, { ...todoTask, id: '11', pinned: true }, { ...todoTask, id: '12', status: 'doing' }])
+  const row = id => nodes(h.renderTasks()).find(n => n.props.draggable === true && n.key === id)
+  const event = () => ({ clientY: 1, dataTransfer: { setData() {} }, preventDefault() {}, stopPropagation() { this.stopped = true } })
+  for (const id of ['10', '11']) {
+    row('10').props.onDragStart(event())
+    const over = event()
+    row(id).props.onDragOver(over)
+    assert.ok(over.stopped)
+    const drop = event()
+    await row(id).props.onDrop(drop)
+    assert.ok(drop.stopped)
+    assert.equal(h.calls.length, 0)
+  }
+  row('11').props.onDragStart(event())
+  const drop = event()
+  await row('12').props.onDrop(drop)
+  assert.ok(!drop.stopped)
+  await nodes(h.renderTasks()).find(n => n.type === 'section' && n.props['aria-label'] === '进行中').props.onDrop(drop)
+  assert.deepEqual(plain(h.calls.at(-1)), ['rest', '/tasks/11', { method: 'PATCH', body: { status: 'doing' } }])
 })
