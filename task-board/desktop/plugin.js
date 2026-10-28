@@ -78,7 +78,7 @@ const taskBoardStyles = `.tb-root { --tb-space:calc(.25rem * var(--spacing-mul, 
 .tb-root .tb-more summary { cursor:pointer; list-style:none; color:var(--ui-text-tertiary); padding:0 calc(var(--tb-space) * 2); border-radius:var(--radius-sm); }
 .tb-root .tb-more summary::-webkit-details-marker { display:none; }
 .tb-root .tb-more summary:hover { background:var(--chrome-action-hover); color:var(--ui-text-primary); }
-.tb-root .tb-more-actions { position:absolute; top:100%; right:0; z-index:2; display:flex; flex-direction:column; min-width:132px; padding:var(--tb-space); border:1px solid var(--ui-stroke-secondary); border-radius:var(--radius-sm); background:var(--popover); color:var(--popover-foreground); box-shadow:var(--shadow-md); }
+.tb-root .tb-more-actions { position:absolute; top:100%; right:0; z-index:2; display:flex; flex-direction:column; min-width:132px; padding:var(--tb-space); border:1px solid var(--ui-stroke-secondary); border-radius:var(--radius-sm); background:var(--ui-bg-elevated); color:var(--ui-text-primary); box-shadow:var(--shadow-md); }
 .tb-root .tb-more-actions button { justify-content:flex-start; white-space:nowrap; }
 .tb-root .tb-add-task { width:100%; border:1px dashed var(--ui-stroke-secondary); color:var(--ui-text-secondary); margin-top:auto; }
 .tb-root .tb-empty { display:flex; flex:1; flex-direction:column; align-items:center; justify-content:center; gap:calc(var(--tb-space) * 2); text-align:center; padding:calc(var(--tb-space) * 6) calc(var(--tb-space) * 2); color:var(--ui-text-secondary); }
