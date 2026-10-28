@@ -59,7 +59,8 @@ Requires the Hermes desktop app with plugin support.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DEV_BOARD_WORKTREE_ROOTS` | `~/.worktrees:~/code/.worktrees:~/code/.tmp-worktrees` | Colon-separated worktree roots to scan |
+| `DEV_BOARD_WORKTREE_ROOTS` | `~/.worktrees:~/code/.worktrees` | Colon-separated worktree roots to scan |
+| `DEV_BOARD_TEMP_ROOTS` | `~/.hermes/.tmp-worktrees:~/code/.tmp-worktrees` | Colon-separated temporary integration roots; excluded by default. Explicit `DEV_BOARD_WORKTREE_ROOTS` entries take precedence |
 | `DEV_BOARD_TASK_RE` | `-(\d{2,6})$` | Regex for the task-id suffix of a worktree dir (`repo-1234` → task `1234`) |
 | `DEV_BOARD_TITLE_RE` | `([A-Za-z]+-\d{2,6})` | Regex extracting a task id from a session title (`ZT-9248 …`, `GH-12 …`) |
 | `DEV_BOARD_SESSION_DBS` | `$HERMES_HOME/state.db` + `profiles/*/state.db` | Colon-separated session stores to map sessions → tasks |

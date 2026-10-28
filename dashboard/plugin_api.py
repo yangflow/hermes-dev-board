@@ -3,7 +3,9 @@ r"""Dev Board backend — worktree board by task id, session mapping, changes, d
 Configuration uses gateway environment variables, plus optional live review-host
 settings in $HERMES_HOME/dev-board/settings.json:
   DEV_BOARD_WORKTREE_ROOTS  colon-separated worktree roots
-                            (default: ~/.worktrees:~/code/.worktrees:~/code/.tmp-worktrees)
+                            (default: ~/.worktrees:~/code/.worktrees)
+  DEV_BOARD_TEMP_ROOTS      colon-separated temporary integration roots, excluded by default
+                            (default: ~/.hermes/.tmp-worktrees:~/code/.tmp-worktrees)
   DEV_BOARD_TASK_RE         regex for the task-id suffix of a worktree dir
                             (default: -(\d{2,6})$  e.g. repo-1234 -> task 1234)
   DEV_BOARD_TITLE_RE        regex extracting a task id from a session title
@@ -289,13 +291,20 @@ def update_review_link(dir: str = Query(...), url: str = Query(...), action: str
     return {"ok": True}
 
 
-def _roots() -> list[Path]:
+def _roots(kind: str = "feature") -> list[Path]:
+    if kind == "temporary":
+        home = Path.home()
+        raw = os.environ.get("DEV_BOARD_TEMP_ROOTS", f"{home}/.hermes/.tmp-worktrees:{home}/code/.tmp-worktrees")
+        return [p for part in raw.split(":") if part.strip()
+                and (p := Path(part).expanduser()).is_dir()]
     raw = os.environ.get("DEV_BOARD_WORKTREE_ROOTS")
     if raw:
         candidates = [Path(p).expanduser() for p in raw.split(":") if p.strip()]
     else:
         home = Path.home()
-        candidates = [home / ".worktrees", home / "code" / ".worktrees", home / "code" / ".tmp-worktrees"]
+        temporary = {p.resolve() for p in _roots("temporary")}
+        candidates = [p for p in (home / ".worktrees", home / "code" / ".worktrees")
+                      if p.resolve() not in temporary]
     return [c for c in candidates if c.is_dir()]
 
 
@@ -311,9 +320,9 @@ def _run(args: list[str], cwd: Path | None = None, timeout: int = 15) -> str:
         return ""
 
 
-def _task_worktrees() -> list[tuple[Path, str, str]]:
+def _task_worktrees(kind: str = "feature") -> list[tuple[Path, str, str]]:
     rows = []
-    for root in _roots():
+    for root in _roots(kind):
         for d in sorted(root.iterdir()):
             if not d.is_dir() or d.name.startswith(".") or not (d / ".git").exists():
                 continue
@@ -388,6 +397,9 @@ def task_sessions() -> dict:
     """Task number -> sessions whose title carries a matching id, across profile stores."""
     import sqlite3
 
+    temporary_only = {task for _, task, _ in _task_worktrees("temporary")} - {
+        task for _, task, _ in _task_worktrees()
+    }
     out: dict[str, list] = {}
     for db in _session_dbs():
         try:
@@ -428,7 +440,8 @@ def task_sessions() -> dict:
                     if root not in lineages or len(chain) > len(lineages[root][1]["session_ids"]):
                         lineages[root] = (num.group(1), entry)
             for num, entry in lineages.values():
-                out.setdefault(num, []).append(entry)
+                if num not in temporary_only:
+                    out.setdefault(num, []).append(entry)
         except Exception:
             continue
     return {"zt_sessions": out}

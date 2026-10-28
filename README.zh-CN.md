@@ -51,7 +51,8 @@ plugins:
 
 | 变量 | 默认值 | 作用 |
 |---|---|---|
-| `DEV_BOARD_WORKTREE_ROOTS` | `~/.worktrees:~/code/.worktrees:~/code/.tmp-worktrees` | 冒号分隔的 worktree 扫描根目录 |
+| `DEV_BOARD_WORKTREE_ROOTS` | `~/.worktrees:~/code/.worktrees` | 冒号分隔的 worktree 扫描根目录 |
+| `DEV_BOARD_TEMP_ROOTS` | `~/.hermes/.tmp-worktrees:~/code/.tmp-worktrees` | 冒号分隔的临时集成根目录，默认排除；显式列入 `DEV_BOARD_WORKTREE_ROOTS` 的目录优先保留 |
 | `DEV_BOARD_TASK_RE` | `-(\d{2,6})$` | 提取 worktree 目录名末尾的任务编号，使用第一个捕获组 |
 | `DEV_BOARD_TITLE_RE` | `([A-Za-z]+-\d{2,6})` | 提取会话标题中的任务标签，使用第一个捕获组，再取标签末尾数字关联 worktree |
 | `DEV_BOARD_SESSION_DBS` | `$HERMES_HOME/state.db` 及其 `profiles/*/state.db` | 冒号分隔的会话数据库路径 |

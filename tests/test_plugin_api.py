@@ -50,6 +50,54 @@ class PluginApiTests(unittest.TestCase):
         script.write_text(body)
         os.environ["DEV_BOARD_EDITOR"] = shlex.join([sys.executable, str(script), "--reuse-window"])
 
+    def test_default_roots_exclude_temporary_tasks_and_sessions(self):
+        os.environ.pop("DEV_BOARD_WORKTREE_ROOTS", None)
+        os.environ.pop("DEV_BOARD_TEMP_ROOTS", None)
+        feature = self.root / "code/.worktrees"
+        feature.mkdir(parents=True)
+        self.worktrees = feature
+        kept = self.repo("service-1234")
+        temporary = self.root / "code/.tmp-worktrees"
+        temporary.mkdir()
+        self.worktrees = temporary
+        excluded = self.repo("mala-op-test-8858")
+        self.repo("service-1234")
+        other = self.root / ".hermes/.tmp-worktrees"
+        other.mkdir(parents=True)
+        self.worktrees = other
+        self.repo("jili-9241")
+        self.database(self.home / "state.db", [
+            {"id": "temporary", "title": "ZT-8858 integration"},
+            {"id": "shared", "title": "ZT-1234 feature"},
+        ])
+        with patch.object(api.Path, "home", return_value=self.root):
+            self.assertEqual(api._roots(), [feature])
+            self.assertEqual(set(api._roots("temporary")), {temporary, other})
+            tasks = self.client.get("/board").json()["tasks"]
+            self.assertEqual([(t["id"], [r["dir"] for r in t["repos"]]) for t in tasks],
+                             [("1234", [str(kept)])])
+            self.assertEqual(self.client.get("/task_changes?task=8858").json()["repos"], [])
+            self.assertEqual(self.client.post("/open_editor?task=8858").status_code, 404)
+            self.assertEqual(set(self.client.get("/zt_sessions").json()["zt_sessions"]), {"1234"})
+        self.assertTrue((excluded / ".git").exists())
+
+    def test_explicit_feature_root_overrides_temporary_classification(self):
+        repo = self.repo("service-8858")
+        os.environ["DEV_BOARD_TEMP_ROOTS"] = str(self.worktrees)
+        self.database(self.home / "state.db", [{"id": "explicit", "title": "ZT-8858 task"}])
+        self.assertEqual(api._roots(), [self.worktrees])
+        self.assertEqual(self.client.get("/board").json()["tasks"][0]["repos"][0]["dir"], str(repo))
+        self.assertEqual(set(self.client.get("/zt_sessions").json()["zt_sessions"]), {"8858"})
+        self.assertEqual(len(self.client.get("/task_changes?task=8858").json()["repos"]), 1)
+
+    def test_configured_temporary_root_excludes_default_feature_root(self):
+        os.environ.pop("DEV_BOARD_WORKTREE_ROOTS", None)
+        feature = self.root / ".worktrees"
+        feature.mkdir()
+        os.environ["DEV_BOARD_TEMP_ROOTS"] = str(feature)
+        with patch.object(api.Path, "home", return_value=self.root):
+            self.assertEqual(api._roots(), [])
+
     def test_fake_git_preserves_porcelain_leading_column(self):
         result = subprocess.CompletedProcess([], 0, " M adminapi/views.py\n", "")
         with patch.object(api.subprocess, "run", return_value=result):
