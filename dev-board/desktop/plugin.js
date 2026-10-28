@@ -23,15 +23,15 @@ const boardStyles = `
 .dev-board button:focus-visible, .dev-board input:focus-visible, .dev-board [tabindex]:focus-visible { outline:2px solid var(--ui-accent); outline-offset:2px; }
 .dev-board button:disabled { cursor:default; opacity:.5; }
 .dev-board .db-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:6px; min-width:0; }
-.dev-board .db-title { font-size:14px; font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1 1 100%; }
+.dev-board .db-title { font-size:14px; font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1 1 0; }
 .dev-board .db-card { border:1px solid var(--ui-stroke-secondary); border-radius:8px; overflow:hidden; }
 .dev-board .db-card-head { padding:12px 14px; }
 .dev-board .db-card-head > * { min-width:0; max-width:100%; }
 .dev-board .db-repos { display:flex; flex-direction:column; gap:10px; padding:12px; }
-.dev-board .db-repo { min-width:0; padding:10px; border:1px solid var(--ui-stroke-secondary); border-radius:5px; }
-.dev-board .db-repo-head { display:flex; align-items:center; gap:6px; width:100%; min-width:0; border:0; background:transparent; color:inherit; text-align:left; padding:0 0 6px; }
+.dev-board .db-repo { min-width:0; border-radius:5px; }
+.dev-board .db-repo-head { display:flex; align-items:center; gap:6px; min-width:0; border:0; background:transparent; color:inherit; text-align:left; }
 .dev-board .db-repo-name { font-size:13px; font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.dev-board .db-meta { font-size:12px; color:var(--ui-text-tertiary); min-width:0; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.dev-board .db-meta { font-size:12px; color:var(--ui-text-secondary); min-width:0; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .dev-board .db-review { width:100%; min-width:0; font-size:12px; border-top:1px solid var(--ui-stroke-secondary); padding:8px 0 0; margin-top:6px; overflow-wrap:anywhere; }
 .dev-board .db-review-head { display:flex; align-items:center; flex-wrap:wrap; gap:4px; color:var(--ui-text-secondary); }
 .dev-board .db-review-head > span { flex:1 1 120px; }
@@ -64,6 +64,48 @@ const boardStyles = `
 .dev-board.db-dock .db-review-status { grid-column:1 / -1; grid-row:2; color:var(--ui-text-tertiary); }
 .dev-board.db-dock .db-review-action { width:26px; height:26px; padding:0; }
 .dev-board.db-dock .db-clean { padding:4px 0; color:var(--ui-text-tertiary); }
+
+.dev-board .db-board-content { display:flex; flex-direction:column; gap:24px; padding:12px; min-width:0; }
+.dev-board .db-board-toolbar { color:var(--ui-text-secondary); }
+.dev-board .db-board-count { flex:1; min-width:0; }
+.dev-board .db-card { background:color-mix(in srgb, var(--ui-text-primary) 5%, transparent); }
+.dev-board .db-card-active { border-color:var(--ui-accent); }
+.dev-board .db-card-head { display:flex; align-items:center; gap:8px; border-bottom:1px solid var(--ui-stroke-secondary); }
+.dev-board .db-card-head .db-title { flex:1 1 0; }
+.dev-board .db-card-head > :not(.db-title) { flex-shrink:0; }
+.dev-board .db-card-head > .db-task-actions { flex-shrink:1; min-width:0; }
+.dev-board .db-task-actions { display:flex; align-items:center; gap:6px; }
+.dev-board .db-task-actions > button { height:28px; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.dev-board .db-repos { padding:12px; gap:10px; }
+.dev-board .db-repo { padding:12px; border:0; background:color-mix(in srgb, var(--ui-text-primary) 2%, transparent); }
+.dev-board .db-repo-head { width:auto; flex:1 1 0; padding:0; }
+.dev-board .db-repo-head > :not(.db-repo-name) { flex-shrink:0; }
+.dev-board .db-repo-meta { display:flex; gap:10px; margin:4px 0; }
+.dev-board .db-branch { max-width:45%; font-family:monospace; }
+.dev-board .db-branch, .dev-board .db-commit { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.dev-board .db-hash { font-family:monospace; }
+.dev-board .db-repo .db-review { border:0; padding:0; margin:0; }
+.dev-board .db-review-head { flex-wrap:nowrap; gap:6px; }
+.dev-board .db-review-head > .db-review-summary { flex:0 1 auto; min-width:0; font-size:11px; color:var(--ui-text-secondary); }
+.dev-board .db-review-action { flex-shrink:0; width:28px; height:28px; padding:0; }
+.dev-board .db-review-row { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 8px; color:var(--ui-text-primary); }
+.dev-board .db-review-id { color:var(--ui-accent); white-space:nowrap; }
+.dev-board .db-review-title { flex:1 1 120px; min-width:0; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+.dev-board .db-review-target, .dev-board .db-review-badge { font-size:11px; border-radius:4px; padding:1px 5px; max-width:100%; overflow-wrap:anywhere; background:color-mix(in srgb, var(--ui-text-secondary) 10%, transparent); }
+.dev-board .db-review-target, .dev-board .db-review-draft { color:var(--ui-text-secondary); }
+.dev-board .db-review-merged { color:var(--ui-green); background:color-mix(in srgb, var(--ui-green) 12%, transparent); }
+.dev-board .db-review-open { color:var(--ui-accent); background:color-mix(in srgb, var(--ui-accent) 12%, transparent); }
+@media (max-width:480px) {
+  .dev-board .db-board-content { padding:8px; gap:20px; }
+  .dev-board .db-card-head { gap:4px; padding:12px 8px; }
+  .dev-board .db-task-actions { gap:2px; flex-shrink:1; min-width:0; }
+  .dev-board .db-task-actions > button { padding-inline:4px; font-size:11px; }
+  .dev-board .db-repos { padding:8px; }
+  .dev-board .db-repo { padding:12px; }
+  .dev-board .db-repo .db-review-head { flex-wrap:wrap; }
+  .dev-board .db-repo-head { flex-basis:calc(100% - 72px); }
+  .dev-board .db-repo .db-review-summary { order:1; flex-basis:100%; }
+}
 
 `
 const boardStyle = () => jsx('style', { children: boardStyles })
@@ -102,7 +144,7 @@ async function openReview(url) {
   }
 }
 
-function ReviewLinks({ repo, showRepo = true, compact = false }) {
+function ReviewLinks({ repo, showRepo = true, compact = false, repoHeader, metadata }) {
   const query = useReviews(repo.dir, repo.branch)
   const [adding, setAdding] = useState(false)
   const [url, setUrl] = useState('')
@@ -132,21 +174,29 @@ function ReviewLinks({ repo, showRepo = true, compact = false }) {
     title: compact ? repo.repo + ' · ' + (repo.branch || '(detached)') : undefined,
     onClick: (event) => event.stopPropagation(), children: [
       jsxs('div', { className: 'db-review-head', children: [
+        repoHeader || null,
         compact && showRepo ? jsx('span', { className: 'db-review-name', title: repo.repo, children: repo.repo }) : null,
-        jsx('span', { className: compact ? 'db-review-status' : undefined, children: (compact ? '' : '代码审阅 · ' + (showRepo ? repo.repo + ' · ' : '')) + (query.isLoading ? '加载中…' : query.isError ? '请求失败' :
-          (!compact || ['ok', 'empty'].includes(data?.status) ? (reviews.length + manual.length) + ' · ' : '') + (status[data?.status] || '等待加载')) }),
-        jsx(Button, { variant: 'ghost', size: 'sm', className: compact ? 'db-review-action' : undefined,
-          title: compact ? '刷新 ' + repo.repo + ' 审阅' : undefined, 'aria-label': compact ? '刷新 ' + repo.repo + ' 审阅' : undefined,
-          disabled: query.isFetching, onClick: query.refresh, children: compact ? '↻' : '刷新审阅' }),
-        jsx(Button, { variant: 'ghost', size: 'sm', className: compact ? 'db-review-action' : undefined,
-          title: compact ? '为 ' + repo.repo + ' 添加链接' : undefined, 'aria-label': compact ? '为 ' + repo.repo + ' 添加链接' : undefined,
-          disabled: needsBranch, onClick: () => setAdding(!adding), children: compact ? '+' : '添加链接' })
+        jsx('span', { className: compact ? 'db-review-status' : 'db-review-summary', children: (!compact && showRepo ? repo.repo + ' · ' : '') + (query.isLoading ? '加载中…' : query.isError ? '请求失败' :
+          ((compact ? ['ok', 'empty'].includes(data?.status) : ['ok', 'empty'].includes(data?.status) || reviews.length + manual.length) ? (reviews.length + manual.length) + ' · ' : '') + (status[data?.status] || '等待加载')) }),
+        jsx(Button, { variant: 'ghost', size: 'sm', className: 'db-review-action',
+          title: '刷新 ' + repo.repo + ' 审阅', 'aria-label': '刷新 ' + repo.repo + ' 审阅',
+          disabled: query.isFetching, onClick: query.refresh, children: '↻' }),
+        jsx(Button, { variant: 'ghost', size: 'sm', className: 'db-review-action',
+          title: '为 ' + repo.repo + ' 添加链接', 'aria-label': '为 ' + repo.repo + ' 添加链接',
+          disabled: needsBranch, onClick: () => setAdding(!adding), children: '+' })
       ]}),
+      metadata || null,
       query.isError ? jsx('div', { role: 'alert', children: query.error?.message || '审阅请求失败' }) : null,
       data?.message && !['ok', 'empty', 'unsupported', 'unavailable', 'timeout', 'partial'].includes(data.status) ? jsx('div', { children: message }) : null,
-      ...reviews.map((r) => jsx('button', { type: 'button', className: 'db-review-link',
-        onClick: () => openReview(r.url), children: (r.provider === 'gitlab' ? 'MR !' : 'PR #') + r.number + ' ' + r.title +
-          ' → ' + r.target_branch + ' · ' + ({ merged: '已合并', open: '待合并', opened: '待合并', closed: '已关闭' }[r.state] || r.state) + (r.draft ? ' · 草稿' : '') }, r.provider + ':' + r.number)),
+      ...reviews.map((r) => jsxs('button', { type: 'button', className: 'db-review-link db-review-row',
+        title: r.title, onClick: () => openReview(r.url), children: [
+          jsx('strong', { className: 'db-review-id', children: (r.provider === 'gitlab' ? 'MR !' : 'PR #') + r.number }),
+          jsx('span', { className: 'db-review-title', title: r.title, children: r.title }),
+          jsx('span', { className: 'db-review-target', title: r.target_branch, children: '→ ' + r.target_branch }),
+          jsx('span', { className: 'db-review-badge db-review-' + (r.state === 'merged' ? 'merged' : r.draft ? 'draft' : ['open', 'opened'].includes(r.state) ? 'open' : 'draft'),
+            children: ({ merged: '已合并', open: '待合并', opened: '待合并', closed: '已关闭' }[r.state] || r.state) }),
+          r.draft ? jsx('span', { className: 'db-review-badge db-review-draft', children: '草稿' }) : null
+        ] }, r.provider + ':' + r.number)),
       ...manual.map((link) => jsxs('div', { className: 'db-manual', children: [
         jsx('button', { type: 'button', className: 'db-review-link', onClick: () => openReview(link), children: '手工 · ' + link }),
         jsx(Button, { variant: 'ghost', size: 'sm', disabled: saving, onClick: () => update('remove', link), children: '移除' })
@@ -543,15 +593,15 @@ function TaskCard({ task, activeZt, onPickRepo, pickedDir, editorName = 'VS Code
   const title = preferred?.title || taskPrefix(task.id, sessions.data?.zt_sessions)
   const isActive = activeZt === task.id
   return jsxs('div', {
-    className: cn('db-card rounded-lg border bg-transparent', isActive ? 'border-(--accent)' : 'border-(--ui-stroke-secondary)'),
+    className: cn('db-card', isActive && 'db-card-active'),
     children: [
-      jsxs('div', { className: 'db-card-head db-toolbar border-b border-(--ui-stroke-secondary)', children: [
+      jsxs('div', { className: 'db-card-head', children: [
         jsx('span', { className: 'db-title', title, children: title }),
         jsx(Badge, { variant: 'secondary', children: task.repos.length + ' 仓' }),
         isActive ? jsx(Badge, { variant: 'success', children: '当前会话' }) : null,
-        jsxs('div', { className: 'ml-auto flex gap-1', children: [
-          preferred ? jsx(Button, { variant: 'ghost', size: 'sm', onClick: () => openTaskSession(preferred), children: '打开会话' }) : null,
-          chips.length > 1 ? jsx(Button, { variant: 'ghost', size: 'sm', onClick: () => setChoosing(!choosing), children: '选择会话' }) : null,
+        jsxs('div', { className: 'db-task-actions', children: [
+          preferred ? jsx(Button, { variant: 'default', size: 'sm', title: '打开会话', onClick: () => openTaskSession(preferred), children: '打开会话' }) : null,
+          chips.length > 1 ? jsx(Button, { variant: 'ghost', size: 'sm', title: '选择会话', onClick: () => setChoosing(!choosing), children: '选择会话' }) : null,
           choosing && chips.length > 1 ? jsx(Select, { value: '', onValueChange: (value) => {
             const s = chips.find((s) => JSON.stringify([s.profile || 'default', s.id]) === value)
             if (s) { setChoosing(false); return openTaskSession(s) }
@@ -560,7 +610,7 @@ function TaskCard({ task, activeZt, onPickRepo, pickedDir, editorName = 'VS Code
             jsx(SelectContent, { children: chips.map((s) => jsx(SelectItem, { value: JSON.stringify([s.profile || 'default', s.id]), children: (s.profile || 'default') + ' · ' + s.title }, JSON.stringify([s.profile || 'default', s.id]))) })
           ] }) : null,
           jsx(Button, {
-            variant: 'ghost', size: 'sm',
+            variant: 'secondary', size: 'sm', title: '在 ' + editorName + ' 打开',
             onClick: () => openEditor(task.id, editorName),
             children: '在 ' + editorName + ' 打开'
           })
@@ -568,16 +618,20 @@ function TaskCard({ task, activeZt, onPickRepo, pickedDir, editorName = 'VS Code
       ]}),
       jsx('div', { className: 'db-repos', children: task.repos.map((r) => jsxs('div', {
         className: 'db-repo',
-        style: pickedDir === r.dir ? { borderColor: 'var(--ui-accent)' } : undefined,
+        style: pickedDir === r.dir ? { outline: '1px solid var(--ui-accent)' } : undefined,
         children: [
-          jsxs('button', { type: 'button', className: 'db-repo-head', onClick: () => onPickRepo(r), 'aria-pressed': pickedDir === r.dir, title: r.dir, children: [
-            jsx(StatusDot, { tone: r.dirty > 0 ? 'warn' : 'good' }),
+          jsx(ReviewLinks, { repo: r, showRepo: false, repoHeader: jsxs('button', { type: 'button', className: 'db-repo-head', onClick: () => onPickRepo(r), 'aria-pressed': pickedDir === r.dir, title: r.dir, children: [
+            jsx('span', { title: r.dirty > 0 ? '未提交 ' + r.dirty : '干净', children: jsx(StatusDot, { tone: r.dirty > 0 ? 'warn' : 'good' }) }),
             jsx('span', { className: 'db-repo-name', children: r.repo }),
             r.dirty > 0 ? jsx(Badge, { variant: 'warning', children: r.dirty + ' 未提交' }) : null
           ]}),
-          jsx('div', { className: 'db-meta', title: r.branch || '(detached)', children: r.branch || '(detached)' }),
-          jsx('div', { className: 'db-meta', title: r.last || '—', children: r.last || '—' }),
-          jsx(ReviewLinks, { repo: r, showRepo: false })
+          metadata: jsxs('div', { className: 'db-repo-meta db-meta', children: [
+            jsx('span', { className: 'db-branch', title: r.branch || '(detached)', children: r.branch || '(detached)' }),
+            jsx('span', { className: 'db-commit', title: r.last || '—', children: [
+              jsx('span', { className: 'db-hash', children: (r.last || '—').split(' ')[0] }),
+              ' ' + (r.last || '').split(' ').slice(1).join(' ')
+            ] })
+          ] }) })
         ]
       }, r.dir)) })
     ]
@@ -595,15 +649,15 @@ function BoardPage() {
   const tasks = board.data?.tasks || []
   const sorted = activeZt ? [...tasks.filter((t) => t.id === activeZt), ...tasks.filter((t) => t.id !== activeZt)] : tasks
   return jsxs(ScrollArea, { className: 'dev-board h-full', children: [
-    boardStyle(), jsxs('div', { className: 'flex flex-col gap-2 p-3', children: [
-      jsxs('div', { className: 'db-toolbar text-(--ui-text-tertiary) text-xs', children: [
-        jsx('span', { children: tasks.length + ' 个任务' + (activeZt ? ' · 当前 ' + taskPrefix(activeZt, sessions.data?.zt_sessions) : '') }),
+    boardStyle(), jsxs('div', { className: 'db-board-content', children: [
+      jsxs('div', { className: 'db-toolbar db-board-toolbar', children: [
+        jsx('span', { className: 'db-board-count', children: tasks.length + ' 个任务' + (activeZt ? ' · 当前 ' + taskPrefix(activeZt, sessions.data?.zt_sessions) : '') }),
         jsx(Button, {
           variant: 'secondary', size: 'sm',
           onClick: () => openDock(sessions.data?.zt_sessions || {}),
           children: '在会话右侧打开'
         }),
-        jsx(Button, { variant: 'ghost', size: 'sm', onClick: () => board.refetch(), children: '刷新' })
+        jsx(Button, { variant: 'ghost', size: 'sm', className: 'db-review-action', 'aria-label': '刷新', title: '刷新', onClick: () => board.refetch(), children: '↻' })
       ]}),
       sorted.map((t) => jsx(TaskCard, { task: t, activeZt, pickedDir, editorName: board.data?.editor_name || 'VS Code', onPickRepo: (r) => setPickedDir(r.dir) }, t.id))
     ]})
