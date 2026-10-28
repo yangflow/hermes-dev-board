@@ -65,7 +65,7 @@ function harness(saved = new Map()) {
     useQuery(options) { queries.push(options); return results[options.queryKey[0]] || {} },
     window: { addEventListener() {}, removeEventListener() {} },
     ROUTES_AREA: 'routes', SIDEBAR_NAV_AREA: 'nav', PALETTE_AREA: 'palette',
-    ...Object.fromEntries(['Badge', 'Button', 'EmptyState', 'ScrollArea', 'Select', 'SelectContent', 'SelectItem',
+    ...Object.fromEntries(['Badge', 'Button', 'Codicon', 'EmptyState', 'ScrollArea', 'Select', 'SelectContent', 'SelectItem',
       'SelectTrigger', 'SelectValue', 'StatusDot', 'Dialog', 'DialogTrigger', 'DialogContent', 'DialogHeader', 'DialogTitle', 'DialogDescription', 'DropdownMenu', 'DropdownMenuTrigger', 'DropdownMenuContent', 'DropdownMenuItem'].map((name) => [name, name]))
   })
   const source = fs.readFileSync(path.join(__dirname, '../task-board/desktop/plugin.js'), 'utf8')
@@ -90,7 +90,7 @@ function harness(saved = new Map()) {
     },
     dispose() { slots.forEach((slot) => slot?.cleanup?.()) }
   }
-  context.plugin.register({ storage: { get: (key, fallback) => saved.has(key) ? saved.get(key) : fallback, set: (key, value) => saved.set(key, value) }, onDispose: (fn) => cleanups.push(fn), os: { openExternal: async (url) => { calls.push(['external', url]); return true } }, rest: (...args) => h.rest(...args), register: (entry) => registrations.push(entry) })
+  context.plugin.register({ storage: { get: (key, fallback) => saved.has(key) ? saved.get(key) : fallback, set: (key, value) => saved.set(key, value) }, onDispose: (fn) => cleanups.push(fn), os: { openExternal: async (url) => { calls.push(['external', url]); return h.externalResult ?? true } }, rest: (...args) => h.rest(...args), register: (entry) => registrations.push(entry) })
   return h
 }
 
@@ -637,4 +637,49 @@ test('non-todo tasks without sessions retain session launch in overflow', async 
     assert.equal(h.calls.find(c => c[0] === 'rpc')[1], 'session.create')
     assert.equal(h.calls.at(-1)[2].body.status, 'doing')
   }
+})
+
+
+test('card and list expose source actions without opening details or editing, retaining ref links', async () => {
+  for (const view of ['board', 'list']) {
+    const task = { ...todoTask, url: 'https://example.com/issues/1234' }
+    const h = tasksHarness([task, { ...todoTask, id: '11', title: 'No source' }])
+    if (view === 'list') button(h.renderTasks(), '☰ 列表')()
+    const panel = h.renderTasks()
+    const sources = nodes(panel).filter(n => n.type === 'Button' && n.props['aria-label'] === '打开原地址')
+    assert.equal(sources.length, 1)
+    assert.equal(sources[0].props.title, '打开原地址：' + task.url)
+    assert.equal(nodes(sources[0]).find(n => n.type === 'Codicon').props.name, 'link-external')
+    let stopped = false
+    await sources[0].props.onClick({ stopPropagation() { stopped = true } })
+    assert.equal(stopped, true)
+    assert.deepEqual(plain(h.calls), [['external', task.url]])
+    assert.equal(nodes(h.renderTasks()).some(n => n.type === 'DialogContent'), false)
+    await button(panel, task.ref)()
+    assert.deepEqual(plain(h.calls.at(-1)), ['external', task.url])
+  }
+})
+
+test('details expose source action and failed external opens use the existing error banner', async () => {
+  const task = { ...todoTask, url: 'https://example.com/issues/1234' }
+  const h = tasksHarness([task])
+  h.externalResult = false
+  await nodes(h.renderTasks()).find(n => n.type === 'Button' && n.props['aria-label'] === '打开原地址').props.onClick({ stopPropagation() {} })
+  assert.match(text(h.renderTasks()), /系统未打开链接/)
+  nodes(h.renderTasks()).find(n => n.props['aria-label'] === '查看任务 Ship feature').props.onClick({})
+  let dialog = nodes(h.renderTasks()).find(n => n.type === 'DialogContent')
+  const source = nodes(dialog).find(n => n.type === 'Button' && n.props['aria-label'] === '打开原地址')
+  assert.equal(source.props.title, '打开原地址：' + task.url)
+  assert.equal(nodes(source).find(n => n.type === 'Codicon').props.name, 'link-external')
+  await source.props.onClick({ stopPropagation() {} })
+  dialog = nodes(h.renderTasks()).find(n => n.type === 'DialogContent')
+  assert.equal(dialog.props.banner, '系统未打开链接')
+  assert.equal(text(nodes(dialog).find(n => n.type === 'DialogTitle')), task.title)
+  h.externalResult = true
+  await nodes(dialog).find(n => n.type === 'Button' && n.props['aria-label'] === '打开原地址').props.onClick({ stopPropagation() {} })
+  assert.equal(nodes(h.renderTasks()).find(n => n.type === 'DialogContent').props.banner, undefined)
+  assert.deepEqual(plain(h.calls), Array(3).fill(['external', task.url]))
+  const noSource = tasksHarness()
+  nodes(noSource.renderTasks()).find(n => n.props['aria-label'] === '查看任务 Ship feature').props.onClick({})
+  assert.equal(nodes(noSource.renderTasks()).some(n => n.props['aria-label'] === '打开原地址'), false)
 })
