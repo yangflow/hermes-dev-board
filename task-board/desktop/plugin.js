@@ -1,4 +1,4 @@
-import { cn, host, useQuery, ROUTES_AREA, SIDEBAR_NAV_AREA, PALETTE_AREA, Badge, Button, EmptyState, ScrollArea, Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@hermes/plugin-sdk'
+import { cn, host, useQuery, ROUTES_AREA, SIDEBAR_NAV_AREA, PALETTE_AREA, Badge, Button, Codicon, EmptyState, ScrollArea, Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
 import { useRef, useState } from 'react'
 
@@ -220,6 +220,10 @@ function TasksPage() {
   const tasks = [...allTasks].sort((a, b) => Number(b.pinned) - Number(a.pinned) || a.order - b.order)
     .filter(t => (view === 'board' || filter === 'all' || t.status === filter) && (!labelFilter || (t.labels || []).includes(labelFilter)) && [t.title, t.ref, t.note].join(' ').toLowerCase().includes(search.toLowerCase()))
   const action = (label, onClick, extra = {}) => jsx(Button, { 'aria-label': label, variant: 'ghost', size: 'sm', disabled: busy, onClick, children: label, ...extra })
+  const sourceAction = task => task.url ? action('打开原地址', event => {
+    event.stopPropagation()
+    return run(async () => { if (!await openExternal(task.url)) throw new Error('系统未打开链接') })
+  }, { title: '打开原地址：' + task.url, children: jsxs('span', { children: [jsx(Codicon, { name: 'link-external', size: 14, 'aria-hidden': true }), '打开原地址'] }) }) : null
   const menuAction = (label, onClick, extra = {}) => jsx(DropdownMenuItem, { asChild: true, disabled: busy, children: action(label, onClick, extra) })
   const renderTask = task => jsxs('div', {
           className: cn('tb-task-row', dragging === task.id && 'tb-dragging'), draggable: !busy,
@@ -245,6 +249,7 @@ function TasksPage() {
           ] }),
           view === 'list' ? jsx('span', { className: 'tb-list-status', children: taskStatus[task.status] }) : null,
           jsxs('div', { className: 'tb-card-foot', children: [
+            sourceAction(task),
             task.status === 'todo' ? action('▷ 开始任务', () => run(() => startTaskSession(task, body => update(task, body)))) : task.status === 'doing' ? action('✓ 标记完成', () => run(() => update(task, { status: 'done' }))) : action('↶ 重新打开', () => run(() => update(task, { status: 'todo' }))),
             task.status !== 'todo' && (task.session_id || launchedTasks.has(taskLaunchKey(task))) ? action('打开会话', () => run(async () => { const link = launchedTasks.get(taskLaunchKey(task)) || task; await host.openSession(link.session_id, { profile: link.session_profile }) })) : null,
             jsx('time', { dateTime: task.updated_at || task.created_at, children: relativeTime(task.updated_at || task.created_at) })
@@ -304,7 +309,7 @@ function TasksPage() {
         selected.note ? jsx('p', { className: 'tb-detail-note', children: selected.note }) : null,
         jsx('div', { className: 'tb-labels', children: (selected.labels || []).map(name => labelChip(name, definitions[name])) }),
         jsx('select', { 'aria-label': '更新任务状态', disabled: busy, value: selected.status, onChange: event => run(() => update(selected, { status: event.target.value })), children: Object.entries(taskStatus).map(([value, label]) => jsx('option', { value, children: label }, value)) }),
-        jsxs('div', { className: 'tb-dialog-actions', children: [action('关闭', () => setSelectedId(null)), action('编辑任务', () => { setSelectedId(null); edit(selected) }, { variant: 'outline' })] })
+        jsxs('div', { className: 'tb-dialog-actions', children: [sourceAction(selected), action('关闭', () => setSelectedId(null)), action('编辑任务', () => { setSelectedId(null); edit(selected) }, { variant: 'outline' })] })
       ] }) : null }),
       jsx(Dialog, { open: !!deleting, onOpenChange: open => { if (!open && !busyRef.current) setDeleting(null) }, children: deleting ? jsxs(DialogContent, { className: 'tb-root tb-dialog', banner: failure?.message, onCloseAutoFocus: restoreFocus, children: [
         jsxs(DialogHeader, { children: [jsx(DialogTitle, { children: '删除任务' }), jsx(DialogDescription, { children: '确定删除「' + deleting.title + '」？关联会话会保留。' })] }),
