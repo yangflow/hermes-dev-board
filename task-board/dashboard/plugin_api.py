@@ -36,20 +36,11 @@ def _tasks_file() -> Path:
 def _tasks_read() -> dict:
     try:
         path = _tasks_file()
-        if not path.exists():
-            legacy = path.parent.parent / "dev-board/tasks.json"
-            if legacy.exists():
-                path.parent.mkdir(parents=True, exist_ok=True)
-                legacy.rename(path)
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict) or not isinstance(data.get("tasks"), list) or not isinstance(data.get("next_id"), int):
             raise ValueError()
         ids = []
         for index, task in enumerate(data["tasks"]):
-            if isinstance(task, dict):
-                for old, new in (("task_id", "ref"), ("zentao_id", "ref"), ("zentao_url", "url")):
-                    if old in task:
-                        task.setdefault(new, task.pop(old))
             if (not isinstance(task, dict) or not isinstance(task.get("id"), str) or not task["id"].isdigit()
                     or task.get("order") != index or not all(isinstance(task.get(k), str) for k in ("created_at", "updated_at"))
                     or not {"title", "ref", "note", "url", "status", "pinned"} <= task.keys()):
