@@ -829,7 +829,7 @@ function BoardPage() {
     ...repos.map(repo => jsx(BoardReviewObserver, { repo, onData }, repo.dir)),
     jsxs('div', { className: 'db-board-content', children: [
       jsxs('header', { className: 'db-page-header', children: [
-        jsxs('div', { children: [jsx('div', { className: 'db-eyebrow', children: 'WORKSPACE / TASKS & CODE' }), jsx('h1', { children: '跨仓任务工作区' }), jsx('p', { children: '集中查看任务、关联仓库与合并进度。' })] }),
+        jsxs('div', { children: [jsx('div', { className: 'db-eyebrow', children: 'WORKSPACE / DEV BOARD' }), jsx('h1', { children: '跨仓任务工作区' }), jsx('p', { children: '集中查看任务、关联仓库与合并进度。' })] }),
         jsx(Button, { variant: 'secondary', size: 'sm', onClick: () => openDock(sessions.data?.zt_sessions || {}), children: '在会话右侧打开' })
       ] }),
       jsxs('div', { className: 'db-toolbar db-board-toolbar', children: [
