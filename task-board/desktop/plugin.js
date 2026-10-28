@@ -2,14 +2,17 @@ import { cn, host, useQuery, ROUTES_AREA, SIDEBAR_NAV_AREA, PALETTE_AREA, Badge,
 import { jsx, jsxs } from 'react/jsx-runtime'
 import { useRef, useState } from 'react'
 
+const labelPalette = { red: '#f87171', orange: '#fb923c', amber: '#fbbf24', green: '#4ade80', teal: '#2dd4bf', blue: '#60a5fa', violet: '#a78bfa', gray: '#9ca3af' }
+const labelChip = (name, color) => jsxs('span', { className: 'tb-label', style: { backgroundColor: labelPalette[color] || labelPalette.gray, color: '#17202a' }, children: [jsx('span', { className: 'tb-label-dot', 'aria-hidden': true, style: { backgroundColor: '#17202a' } }), name] })
+
 let taskFetch = null
 let openExternal = null
 const rest = (path, options) => taskFetch(path, options)
 const taskBoardStyles = `.tb-root { min-width:0; width:100%; max-width:100%; box-sizing:border-box; color:var(--ui-text-primary); font-size:12px; }
 .tb-root *, .tb-root *::before, .tb-root *::after { box-sizing:border-box; }
-.tb-root button, .tb-root input { max-width:100%; font:inherit; }
+.tb-root button, .tb-root input, .tb-root select { max-width:100%; font:inherit; }
 .tb-root button { cursor:pointer; }
-.tb-root button:focus-visible, .tb-root input:focus-visible, .tb-root [tabindex]:focus-visible { outline:2px solid var(--ui-accent); outline-offset:2px; }
+.tb-root button:focus-visible, .tb-root input:focus-visible, .tb-root select:focus-visible, .tb-root [tabindex]:focus-visible { outline:2px solid var(--ui-accent); outline-offset:2px; }
 .tb-root button:disabled { cursor:default; opacity:.5; }
 .tb-root .tb-tasks { padding:12px; display:flex; flex-direction:column; gap:8px; min-width:0; }
 .tb-root .tb-task-columns { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
@@ -27,9 +30,21 @@ const taskBoardStyles = `.tb-root { min-width:0; width:100%; max-width:100%; box
 .tb-root .tb-task-note { white-space:pre-wrap; overflow-wrap:anywhere; color:var(--ui-text-secondary); padding:4px 0; }
 .tb-root .tb-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:6px; min-width:0; }
 .tb-root .tb-title { font-size:14px; font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1 1 100%; }
-.tb-root input { min-width:0; flex:1; padding:5px 6px; border:1px solid var(--ui-stroke-secondary); border-radius:4px; color:var(--ui-text-primary); background:transparent; }
+.tb-root select, .tb-root input { min-width:0; flex:1; padding:5px 6px; border:1px solid var(--ui-stroke-secondary); border-radius:4px; color:var(--ui-text-primary); background:transparent; }
 .tb-root .tb-section { margin:10px 4px 4px; padding:6px 0; border-bottom:1px solid var(--ui-stroke-secondary); color:var(--ui-text-secondary); font-size:12px; font-weight:600; }
 .tb-root form { display:flex; gap:6px; align-items:center; min-width:0; }
+.tb-root .tb-label { display:inline-flex; align-items:center; gap:4px; border-radius:10px; padding:2px 7px; max-width:100%; overflow-wrap:anywhere; }
+.tb-root .tb-label-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+.tb-root .tb-labels { display:flex; flex-wrap:wrap; gap:4px; width:100%; min-width:0; }
+.tb-root .tb-label-choice { border:2px solid transparent; border-radius:12px; padding:1px; background:transparent; }
+.tb-root .tb-label-choice[aria-pressed="true"] { border-color:var(--ui-text-primary); }
+.tb-root .tb-label-manager { border:1px solid var(--ui-stroke-secondary); border-radius:6px; padding:6px; min-width:0; }
+.tb-root .tb-label-manager form { flex-wrap:wrap; margin:6px 0; }
+.tb-root .tb-label-manager input { flex:1 1 100px; }
+.tb-root .tb-palette { display:flex; gap:4px; flex-wrap:wrap; }
+.tb-root .tb-palette button { width:24px; height:24px; padding:2px; border:2px solid transparent; border-radius:50%; }
+.tb-root .tb-palette button[aria-pressed="true"] { border-color:var(--ui-text-primary); }
+.tb-root .tb-palette span { display:block; width:100%; height:100%; border-radius:50%; }
 `
 const taskBoardStyle = () => jsx('style', { children: taskBoardStyles })
 
@@ -68,10 +83,15 @@ async function startTaskSession(task, update) {
 
 function TasksPage() {
   const query = useQuery({ queryKey: ['task-board-tasks'], queryFn: () => rest('/tasks') })
+  const labelsQuery = useQuery({ queryKey: ['task-board-labels'], queryFn: () => rest('/labels') })
   const [filter, setFilter] = useState('all')
   const [search, setSearch] = useState('')
+  const [labelFilter, setLabelFilter] = useState('')
+  const [labelEdits, setLabelEdits] = useState({})
+  const [newLabel, setNewLabel] = useState('')
+  const [newColor, setNewColor] = useState('blue')
   const [editing, setEditing] = useState(null)
-  const [draft, setDraft] = useState({ title: '', ref: '', note: '', url: '' })
+  const [draft, setDraft] = useState({ title: '', ref: '', note: '', url: '', labels: [] })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const busyRef = useRef(false)
@@ -81,29 +101,64 @@ function TasksPage() {
   const run = async (action) => {
     if (busyRef.current) return
     busyRef.current = true; setBusy(true); setError('')
-    try { await action(); await query.refetch() }
+    try { await action(); await query.refetch(); await labelsQuery.refetch() }
     catch (failure) { setError(failure.message || String(failure)) }
     finally { busyRef.current = false; setBusy(false) }
   }
   const update = (task, body) => rest('/tasks/' + task.id, { method: 'PATCH', body })
   const edit = (task) => {
     setEditing(task?.id || 'new')
-    setDraft({ title: task?.title || '', ref: task?.ref || '', note: task?.note || '', url: task?.url || '' })
+    setDraft({ title: task?.title || '', ref: task?.ref || '', note: task?.note || '', url: task?.url || '', labels: [...(task?.labels || [])] })
+  }
+  const definitions = labelsQuery.data?.labels || {}
+  const palette = (value, onChange) => jsx('div', { className: 'tb-palette', role: 'group', 'aria-label': '标签颜色', children: Object.entries(labelPalette).map(([color, hex]) => jsx('button', {
+    type: 'button', disabled: busy, 'aria-label': color, 'aria-pressed': value === color, onClick: () => onChange(color),
+    children: jsx('span', { style: { backgroundColor: hex } })
+  }, color)) })
+  const changeDefinition = (name, replacement) => {
+    setDraft(current => ({ ...current, labels: current.labels.flatMap(label => label === name ? (replacement ? [replacement] : []) : [label]) }))
+    if (labelFilter === name) setLabelFilter(replacement || '')
+    setLabelEdits(current => { const next = { ...current }; delete next[name]; return next })
   }
   const tasks = [...(query.data?.tasks || [])].sort((a, b) => Number(b.pinned) - Number(a.pinned) || a.order - b.order)
-    .filter(t => (filter === 'all' || t.status === filter) && [t.title, t.ref, t.note].join(' ').toLowerCase().includes(search.toLowerCase()))
+    .filter(t => (filter === 'all' || t.status === filter) && (!labelFilter || (t.labels || []).includes(labelFilter)) && [t.title, t.ref, t.note].join(' ').toLowerCase().includes(search.toLowerCase()))
   const action = (label, onClick, extra = {}) => jsx(Button, { variant: 'ghost', size: 'sm', disabled: busy, onClick, children: label, ...extra })
   return jsxs(ScrollArea, { className: 'tb-root h-full', children: [taskBoardStyle(),
     jsxs('div', { className: 'tb-tasks', children: [
       jsxs('div', { className: 'tb-toolbar', children: [jsx('span', { className: 'tb-title', children: '任务清单' }), action('新建任务', () => edit(null)), action('刷新', () => run(() => Promise.resolve()))] }),
       jsxs('div', { className: 'tb-toolbar', role: 'tablist', 'aria-label': '任务状态', children: Object.entries({ all: '全部', ...taskStatus }).map(([value, label]) => action(label, () => setFilter(value), { role: 'tab', 'aria-selected': filter === value })) }),
       jsx('input', { type: 'search', value: search, placeholder: '搜索任务', 'aria-label': '搜索任务', onChange: e => setSearch(e.target.value) }),
-      error || query.isError ? jsx('div', { role: 'alert', children: error || query.error?.message || '加载失败' }) : null,
+      jsx('select', { value: labelFilter, 'aria-label': '标签筛选', onChange: e => setLabelFilter(e.target.value), children: [
+        jsx('option', { value: '', children: 'All labels' }), ...Object.keys(definitions).map(name => jsx('option', { value: name, children: name }, name))
+      ] }),
+      jsxs('details', { className: 'tb-label-manager', children: [jsx('summary', { children: '管理标签' }),
+        ...Object.entries(definitions).map(([name, color]) => {
+          const value = Object.hasOwn(labelEdits, name) ? labelEdits[name] : { name, color }
+          const editLabel = patch => setLabelEdits({ ...labelEdits, [name]: { ...value, ...patch } })
+          return jsxs('form', { 'aria-label': '管理标签 ' + name, onSubmit: e => { e.preventDefault(); return run(async () => {
+            await rest('/labels', { method: 'PATCH', body: { name, new_name: value.name, color: value.color } })
+            changeDefinition(name, value.name.trim())
+          }) }, children: [labelChip(name, color),
+            jsx('input', { 'aria-label': '重命名 ' + name, required: true, maxLength: 40, value: value.name, onChange: e => editLabel({ name: e.target.value }) }),
+            palette(value.color, color => editLabel({ color })),
+            jsx(Button, { type: 'submit', size: 'sm', disabled: busy, children: '保存标签' }),
+            action('删除标签', () => run(async () => { await rest('/labels?name=' + encodeURIComponent(name), { method: 'DELETE' }); changeDefinition(name, null) }), { type: 'button', 'aria-label': '删除标签 ' + name })
+          ] }, name)
+        }),
+        jsxs('form', { 'aria-label': '新建标签', onSubmit: e => { e.preventDefault(); return run(async () => {
+          await rest('/labels', { method: 'POST', body: { name: newLabel, color: newColor } }); setNewLabel('')
+        }) }, children: [jsx('input', { 'aria-label': '新标签名称', value: newLabel, required: true, maxLength: 40, onChange: e => setNewLabel(e.target.value) }),
+          palette(newColor, setNewColor), jsx(Button, { type: 'submit', size: 'sm', disabled: busy, children: '添加标签' })] })
+      ] }),
+      error || query.isError || labelsQuery.isError ? jsx('div', { role: 'alert', children: error || query.error?.message || labelsQuery.error?.message || '加载失败' }) : null,
       editing ? jsxs('form', { className: 'tb-task-form', onSubmit: e => { e.preventDefault(); return run(async () => {
         await rest(editing === 'new' ? '/tasks' : '/tasks/' + editing, { method: editing === 'new' ? 'POST' : 'PATCH', body: draft }); setEditing(null)
       }) }, children: [
         ...[['title', '标题'], ['ref', '任务编号(ref)'], ['note', '备注'], ['url', '链接(url)']].map(([key, label]) => jsx('input', {
           'aria-label': label, placeholder: label, required: key === 'title', type: key === 'url' ? 'url' : 'text', value: draft[key], onChange: e => setDraft({ ...draft, [key]: e.target.value }) }, key)),
+        jsx('div', { className: 'tb-labels', role: 'group', 'aria-label': '任务标签', children: Object.entries(definitions).map(([name, color]) => jsx('button', {
+          type: 'button', className: 'tb-label-choice', disabled: busy, 'aria-pressed': draft.labels.includes(name), onClick: () => setDraft({ ...draft, labels: draft.labels.includes(name) ? draft.labels.filter(label => label !== name) : [...draft.labels, name] }), children: labelChip(name, color)
+        }, name)) }),
         jsx(Button, { type: 'submit', size: 'sm', disabled: busy, children: '保存' }), action('取消', () => setEditing(null), { type: 'button' })
       ] }) : null,
       query.isLoading ? jsx('div', { children: '加载任务…' }) : !tasks.length ? jsx(EmptyState, { title: '暂无任务' }) : null,
@@ -139,6 +194,7 @@ function TasksPage() {
               if (!await openExternal(task.url)) throw new Error('系统未打开链接')
             })) : jsx(Badge, { className: 'tb-task-id', children: task.ref })) : null
           ] }),
+          jsx('div', { className: 'tb-labels', children: (task.labels || []).map(name => jsx('span', { children: labelChip(name, definitions[name]) }, name)) }),
           task.note ? jsx('div', { className: 'tb-task-note', children: task.note }) : null,
           jsxs('div', { className: 'tb-toolbar', children: [
             action(task.session_id || launchedTasks.has(taskLaunchKey(task)) ? '打开会话' : '开始会话', () => run(() => startTaskSession(task, body => update(task, body)))),

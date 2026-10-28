@@ -75,7 +75,7 @@ function harness() {
     ...Object.fromEntries(['Badge', 'Button', 'EmptyState', 'ScrollArea', 'Select', 'SelectContent', 'SelectItem',
       'SelectTrigger', 'SelectValue', 'StatusDot'].map((name) => [name, name]))
   })
-  const source = fs.readFileSync(path.join(__dirname, '../desktop/plugin.js'), 'utf8')
+  const source = fs.readFileSync(path.join(__dirname, '../dev-board/desktop/plugin.js'), 'utf8')
     .replace(/^import .*\n/gm, '').replace('export default {', 'globalThis.plugin = {')
   vm.runInContext(source + '\nglobalThis.api = { useActiveZt, DockPanel, TaskCard, SessionChip, BoardPage, ReviewLinks, useReviews, openReview };', context)
   const h = {
@@ -329,7 +329,7 @@ test('external open failures, false SDK results and credential/scheme URLs surfa
   }
   assert.equal(h.calls.length, 0)
   // Re-register with the actual SDK boolean contract.
-  const source = fs.readFileSync(path.join(__dirname, '../desktop/plugin.js'), 'utf8')
+  const source = fs.readFileSync(path.join(__dirname, '../dev-board/desktop/plugin.js'), 'utf8')
     .replace(/^import .*\n/gm, '').replace('export default {', 'globalThis.plugin = {')
   const notices = []
   const context = vm.createContext({ URL, host: { notify: (n) => notices.push(n) },

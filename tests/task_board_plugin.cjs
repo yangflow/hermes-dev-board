@@ -114,6 +114,7 @@ const plain = (value) => JSON.parse(JSON.stringify(value))
 const todoTask = { id: '10', title: 'Ship feature', ref: 'GH-1234', note: 'remember this', pinned: false, status: 'todo', order: 0 }
 function tasksHarness(tasks = [todoTask]) {
   const h = harness()
+  h.results['task-board-labels'] = { data: { labels: {} }, refetch: async () => {} }
   h.results['task-board-tasks'] = { data: { tasks }, refetch: async () => {} }
   h.renderTasks = () => h.render(h.api.TasksPage)
   return h
@@ -186,7 +187,7 @@ test('task creation/edit form writes fields and URL uses OS opener', async () =>
   let panel = h.renderTasks()
   nodes(panel).find(n => n.props['aria-label'] === '标题').props.onChange({ target: { value: 'New task' } })
   panel = h.renderTasks()
-  await nodes(panel).find(n => n.type === 'form').props.onSubmit({ preventDefault() {} })
+  await nodes(panel).find(n => n.props.className === 'tb-task-form').props.onSubmit({ preventDefault() {} })
   assert.equal(h.calls.at(-1)[1], '/tasks')
   assert.equal(h.calls.at(-1)[2].body.title, 'New task')
   assert.equal(h.api.taskSessionTitle({ ...todoTask, ref: '1234' }), '1234 Ship feature')
@@ -199,9 +200,9 @@ test('GH reference and URL roundtrip through form and titled session without par
   for (const [label, value] of [['标题', 'fix login'], ['任务编号(ref)', 'GH-12'], ['链接(url)', 'https://github.com/example/repo/issues/12']]) {
     nodes(h.renderTasks()).find(n => n.props['aria-label'] === label).props.onChange({ target: { value } })
   }
-  await nodes(h.renderTasks()).find(n => n.type === 'form').props.onSubmit({ preventDefault() {} })
+  await nodes(h.renderTasks()).find(n => n.props.className === 'tb-task-form').props.onSubmit({ preventDefault() {} })
   const body = plain(h.calls.at(-1)[2].body)
-  assert.deepEqual(body, { title: 'fix login', ref: 'GH-12', note: '', url: 'https://github.com/example/repo/issues/12' })
+  assert.deepEqual(body, { title: 'fix login', ref: 'GH-12', note: '', url: 'https://github.com/example/repo/issues/12', labels: [] })
   h.results['task-board-tasks'].data.tasks = [{ ...todoTask, ...body }]
   button(h.renderTasks(), '编辑')()
   assert.equal(nodes(h.renderTasks()).find(n => n.props['aria-label'] === '任务编号(ref)').props.value, body.ref)
@@ -298,10 +299,69 @@ test('task edit submits existing identity and palette navigates independently', 
   const h = tasksHarness()
   button(h.renderTasks(), '编辑')()
   nodes(h.renderTasks()).find(n => n.props['aria-label'] === '标题').props.onChange({ target: { value: 'Edited task' } })
-  await nodes(h.renderTasks()).find(n => n.type === 'form').props.onSubmit({ preventDefault() {} })
+  await nodes(h.renderTasks()).find(n => n.props.className === 'tb-task-form').props.onSubmit({ preventDefault() {} })
   assert.equal(h.calls.at(-1)[1], '/tasks/10')
   assert.equal(h.calls.at(-1)[2].method, 'PATCH')
   assert.equal(h.calls.at(-1)[2].body.title, 'Edited task')
   h.registrations.find(r => r.id === 'tasks-open').data.run()
   assert.deepEqual(plain(h.calls.at(-1)), ['navigate', '/tasks'])
+})
+
+
+test('colored labels roundtrip in task form and combine with status and search', async () => {
+  const h = tasksHarness([
+    { ...todoTask, labels: ['bug'] },
+    { ...todoTask, id: '11', status: 'done', labels: ['bug'], title: 'Done ship' },
+    { ...todoTask, id: '12', labels: ['docs'], title: 'Other' }
+  ])
+  h.results['task-board-labels'].data.labels = { bug: 'red', docs: 'blue' }
+  const row = panel => nodes(panel).filter(n => /(?:^| )tb-task-row(?: |$)/.test(n.props.className || ''))
+  assert.equal(nodes(row(h.renderTasks())[0]).find(n => n.props.className === 'tb-label').props.style.backgroundColor, '#f87171')
+  nodes(h.renderTasks()).find(n => n.props['aria-label'] === '标签筛选').props.onChange({ target: { value: 'bug' } })
+  assert.equal(row(h.renderTasks()).length, 2)
+  nodes(h.renderTasks()).find(n => n.props.role === 'tab' && text(n) === '待办').props.onClick()
+  nodes(h.renderTasks()).find(n => n.props.type === 'search').props.onChange({ target: { value: 'REMEMBER' } })
+  assert.equal(row(h.renderTasks()).length, 1)
+  nodes(h.renderTasks()).find(n => n.props.type === 'search').props.onChange({ target: { value: 'absent' } })
+  assert.equal(row(h.renderTasks()).length, 0)
+  nodes(h.renderTasks()).find(n => n.props.type === 'search').props.onChange({ target: { value: '' } })
+  button(h.renderTasks(), '编辑')()
+  const choice = name => nodes(h.renderTasks()).find(n => n.props.className === 'tb-label-choice' && text(n).trim() === name)
+  assert.equal(choice('bug').props['aria-pressed'], true)
+  choice('docs').props.onClick()
+  await nodes(h.renderTasks()).find(n => n.props.className === 'tb-task-form').props.onSubmit({ preventDefault() {} })
+  assert.deepEqual(plain(h.calls.at(-1)[2].body.labels), ['bug', 'docs'])
+})
+
+test('label manager renders eight palette colors and calls create rename color and delete APIs', async () => {
+  const h = tasksHarness()
+  h.results['task-board-labels'].data.labels = { bug: 'red' }
+  const form = name => nodes(h.renderTasks()).find(n => n.type === 'form' && n.props['aria-label'] === name)
+  const colors = nodes(form('新建标签')).filter(n => n.type === 'button')
+  assert.equal(colors.length, 8)
+  assert.equal(new Set(colors.map(n => n.props.children.props.style.backgroundColor)).size, 8)
+  nodes(form('新建标签')).find(n => n.type === 'input').props.onChange({ target: { value: 'docs' } })
+  colors.find(n => n.props['aria-label'] === 'teal').props.onClick()
+  await form('新建标签').props.onSubmit({ preventDefault() {} })
+  assert.deepEqual(plain(h.calls.at(-1)), ['rest', '/labels', { method: 'POST', body: { name: 'docs', color: 'teal' } }])
+  nodes(form('管理标签 bug')).find(n => n.type === 'input').props.onChange({ target: { value: 'fix' } })
+  nodes(form('管理标签 bug')).find(n => n.props['aria-label'] === 'violet').props.onClick()
+  await form('管理标签 bug').props.onSubmit({ preventDefault() {} })
+  assert.deepEqual(plain(h.calls.at(-1)), ['rest', '/labels', { method: 'PATCH', body: { name: 'bug', new_name: 'fix', color: 'violet' } }])
+  await nodes(form('管理标签 bug')).find(n => n.props['aria-label'] === '删除标签 bug').props.onClick()
+  assert.deepEqual(plain(h.calls.at(-1)), ['rest', '/labels?name=bug', { method: 'DELETE' }])
+})
+
+
+test('label manager supports names that collide with Object prototype keys', async () => {
+  for (const name of ['constructor', 'toString', '__proto__']) {
+    const h = tasksHarness()
+    h.results['task-board-labels'].data.labels = JSON.parse('{"' + name + '":"blue"}')
+    const form = () => nodes(h.renderTasks()).find(n => n.type === 'form' && n.props['aria-label'] === '管理标签 ' + name)
+    assert.equal(nodes(form()).find(n => n.type === 'input').props.value, name)
+    assert.equal(nodes(form()).find(n => n.props['aria-label'] === 'blue').props['aria-pressed'], true)
+    nodes(form()).find(n => n.type === 'input').props.onChange({ target: { value: 'renamed' } })
+    await form().props.onSubmit({ preventDefault() {} })
+    assert.deepEqual(plain(h.calls.at(-1)[2].body), { name, new_name: 'renamed', color: 'blue' })
+  }
 })

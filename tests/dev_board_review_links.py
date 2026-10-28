@@ -7,8 +7,10 @@ import unittest
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
+import sys
+sys.path.insert(0, str(Path(__file__).parents[1] / "dev-board"))
 from dashboard import plugin_api as api
-import test_plugin_api as fixtures
+import dev_board_api as fixtures
 
 
 def github(number=1, **changes):
