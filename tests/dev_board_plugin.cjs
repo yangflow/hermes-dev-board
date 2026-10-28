@@ -73,7 +73,7 @@ function harness() {
     window: { addEventListener() {}, removeEventListener() {} },
     ROUTES_AREA: 'routes', SIDEBAR_NAV_AREA: 'nav', PALETTE_AREA: 'palette',
     ...Object.fromEntries(['Badge', 'Button', 'EmptyState', 'ScrollArea', 'Select', 'SelectContent', 'SelectItem',
-      'SelectTrigger', 'SelectValue', 'StatusDot'].map((name) => [name, name]))
+      'SelectTrigger', 'SelectValue', 'StatusDot', 'Dialog', 'DialogContent', 'DialogDescription', 'DialogFooter', 'DialogHeader', 'DialogTitle'].map((name) => [name, name]))
   })
   const source = fs.readFileSync(path.join(__dirname, '../dev-board/desktop/plugin.js'), 'utf8')
     .replace(/^import .*\n/gm, '').replace('export default {', 'globalThis.plugin = {')
@@ -422,7 +422,10 @@ test('board repo rows and dock all/per-repo selection include code reviews witho
 test('task title, configured launcher and compact review identity', async () => {
   const h = harness()
   const card = h.render(h.api.TaskCard, { task: { id: '1234', repos: [reviewRepo] }, editorName: 'Cursor' })
-  assert.match(text(card), /ZT-1234 task/)
+  assert.match(text(card), /ZT-1234\s+task/)
+  const heading = nodes(card).find(n => n.props.className === 'db-title')
+  assert.equal((text(heading).match(/ZT-1234/g) || []).length, 1)
+  assert.equal(nodes(heading).find(n => n.type === 'strong').props.title, 'ZT-1234 task')
   await button(card, '在 Cursor 打开')()
   assert.match(h.notices.at(-1).message, /Cursor/)
   h.results['dev-board-reviews'] = { data: { ...reviewData, status: 'unsupported', message: 'host is not configured; manual links only' } }
@@ -454,7 +457,7 @@ test('dock headings, compact identities, clean wording and editor metadata', asy
   h.results['dev-board'].data.tasks[0].repos = [reviewRepo, { ...reviewRepo, repo: 'web', dir: '/web' }]
   const panel = h.render(h.api.DockPanel)
   assert.match(text(panel), /ZT-1234 task/)
-  assert.match(text(panel), /文件变更.*无未提交变更.*PR\/MR/)
+  assert.match(text(panel), /WORKTREE.*无未提交变更.*文件变更.*PR\/MR/)
   assert.deepEqual(nodes(panel).filter((n) => n.type === h.api.ReviewLinks).map((n) => [n.props.repo.repo, n.props.compact]), [['api', true], ['web', true]])
   await button(panel, '在 Cursor 打开')()
   assert.equal(h.calls.at(-1)[1], '/open_editor?task=1234')
@@ -562,13 +565,13 @@ test('unsupported review remote explains configuration instead of branch switchi
  assert.doesNotMatch(text(node), /先切换/)
 })
 
-test('empty dock keeps repository selection, one clean message and a single full task title', () => {
+test('empty dock keeps repository selection, one clean message and full task context', () => {
   const h = harness()
   h.results['dev-board'].data.tasks[0].repos = [reviewRepo]
   h.results['dev-board-task-changes'].data.repos = [{ ...reviewRepo, dirty: 0 }]
   let panel = h.render(h.api.DockPanel)
-  assert.equal(nodes(panel).filter(n => n.props.title === h.session.title).length, 1)
-  assert.equal(text(panel).split(h.session.title).length - 1, 1)
+  assert.equal(nodes(panel).filter(n => n.props.className === 'db-context-title' && n.props.title === h.session.title).length, 1)
+  assert.equal(nodes(panel).find(n => n.type === 'SelectItem' && n.props.value === '1234').props.children, h.session.title)
   assert.doesNotMatch(text(panel), /0 文件|0 变更|api（0）/)
   assert.equal(text(panel).split('无未提交变更').length - 1, 1)
   const selects = nodes(panel).filter(n => n.type === 'Select')
@@ -630,15 +633,17 @@ test('board header, stats, table, collapse and review details follow workspace s
   assert.equal(nodes(card).filter(n => n.type === h.api.ReviewLinks).length, 0)
   nodes(card).find(n => n.props['aria-label'] === 'api 审阅详情').props.onClick()
   card = render()
-  assert.equal(nodes(card).find(n => n.props['aria-label'] === 'api 审阅详情').props['aria-expanded'], true)
+  assert.equal(nodes(card).find(n => n.props['aria-label'] === 'api 审阅详情').props['aria-haspopup'], 'dialog')
+  assert.equal(nodes(card).find(n => n.type === 'Dialog').props.open, true)
+  assert.equal(nodes(card).filter(n => n.props.className === 'db-detail-row').length, 0)
   assert.equal(nodes(card).find(n => n.type === h.api.ReviewLinks).props.repo, repo)
   card = render(false)
   assert.equal(nodes(card).filter(n => n.type === 'table').length, 0)
   assert.equal(nodes(card).find(n => n.props.className === 'db-task-toggle').props['aria-expanded'], false)
   const bh = harness()
   let board = bh.render(bh.api.BoardPage)
-  assert.match(text(board), /DEV BOARD.*跨仓任务工作区/)
-  assert.match(text(board), /2\s+个任务 ·\s+0\s+个关联仓库/)
+  assert.match(text(board), /WORKSPACE \/ TASKS & CODE.*跨仓任务工作区/)
+  assert.match(text(board), /2\s+个任务\s+0\s+个关联仓库/)
   assert.doesNotMatch(text(board), /个待合并/)
   assert.deepEqual(nodes(board).filter(n => n.type === bh.api.TaskCard).map(n => n.props.expanded), [true, false])
   button(board, '全部折叠')()
@@ -722,4 +727,219 @@ test('page title keeps intrinsic height in its column heading without changing d
   const row = nodes(card).find(n => n.props.className === 'db-title')
   assert.match(text(row), /ZT-1234.*task/)
   assert.ok(nodes(row).some(n => n.props.className === 'db-ref'))
+})
+
+test('review details open a scoped native dialog, preserve repository identity and close through SDK state', () => {
+  const h = harness()
+  const repos = [reviewRepo, { ...reviewRepo, repo: 'web', dir: '/worktrees/web' }]
+  const render = () => h.render(h.api.TaskCard, { task: { id: '1234', repos } })
+  let card = render()
+  let focused = 0, prevented = 0
+  nodes(card).find(n => n.props['aria-label'] === 'web 审阅详情').props.onClick({ currentTarget: { focus: () => focused++ } })
+  card = render()
+  const dialogContent = nodes(card).find(n => n.type === 'DialogContent')
+  assert.equal(dialogContent.props.className, 'dev-board db-dialog')
+  dialogContent.props.onCloseAutoFocus({ preventDefault: () => prevented++ })
+  assert.equal(focused, 1)
+  assert.equal(prevented, 1)
+  assert.equal(text(nodes(card).find(n => n.type === 'DialogTitle')), 'web · 代码审阅')
+  assert.match(text(nodes(card).find(n => n.type === 'DialogDescription')), /ZT-1234/)
+  assert.equal(nodes(card).find(n => n.type === h.api.ReviewLinks).props.repo.dir, '/worktrees/web')
+  assert.match(text(card), /feat\/exact/)
+  nodes(card).find(n => n.type === 'Dialog').props.onOpenChange(false)
+  assert.ok(!nodes(render()).some(n => n.type === 'Dialog'))
+  nodes(render()).find(n => n.props['aria-label'] === 'api 审阅详情').props.onClick()
+  button(render(), '关闭')()
+  assert.ok(!nodes(render()).some(n => n.type === 'Dialog'))
+})
+
+test('open repository details follow refreshed branch and commit by directory identity', () => {
+  const h = harness()
+  let selected = { ...reviewRepo, dir: '/second/api', last: 'abc123 original commit' }
+  let task = { id: '1234', repos: [reviewRepo, selected] }
+  const render = () => h.render(h.api.TaskCard, { task })
+  let card = render()
+  const triggers = nodes(card).filter(n => n.props['aria-label'] === 'api 审阅详情')
+  triggers[1].props.onClick()
+  card = render()
+  assert.equal(nodes(card).find(n => n.type === h.api.ReviewLinks).props.repo, selected)
+
+  for (const update of [
+    { branch: 'feat/refreshed', last: 'def456 refreshed branch commit' },
+    { branch: 'feat/refreshed', last: 'fed789 latest commit on same branch' }
+  ]) {
+    const previous = selected
+    selected = { ...selected, ...update }
+    task = { ...task, repos: [selected, { ...reviewRepo }] }
+    card = render()
+    const dialog = nodes(card).find(n => n.type === 'DialogContent')
+    assert.ok(dialog, 'refresh keeps the selected repository dialog open')
+    const paths = nodes(dialog).filter(n => n.props.className === 'db-dialog-path').map(text)
+    assert.deepEqual(paths, [selected.dir, '⑂ ' + selected.branch])
+    assert.equal(text(nodes(dialog).find(n => n.props.className === 'db-meta')), selected.last)
+    assert.doesNotMatch(text(dialog), new RegExp(previous.last))
+    const links = nodes(dialog).find(n => n.type === h.api.ReviewLinks)
+    assert.equal(links.props.repo, selected, 'ReviewLinks receives the current repository object')
+    assert.equal(links.props.showRepo, false)
+  }
+})
+
+test('removed repository details close and stay closed when the directory returns', () => {
+  const h = harness()
+  const selected = { ...reviewRepo, dir: '/second/api' }
+  let task = { id: '1234', repos: [reviewRepo, selected] }
+  const render = () => h.render(h.api.TaskCard, { task })
+  let card = render()
+  nodes(card).filter(n => n.props['aria-label'] === 'api 审阅详情')[1].props.onClick()
+  card = render()
+  assert.equal(nodes(card).find(n => n.type === h.api.ReviewLinks).props.repo, selected)
+
+  task = { ...task, repos: [{ ...reviewRepo }] }
+  card = render()
+  assert.ok(!nodes(card).some(n => n.type === 'Dialog'), 'removing the selected directory closes the dialog despite a same-name repository remaining')
+  assert.ok(!nodes(card).some(n => n.type === h.api.ReviewLinks))
+
+  const returned = { ...selected, branch: 'feat/returned', last: '123abc returned commit' }
+  task = { ...task, repos: [reviewRepo, returned] }
+  card = render()
+  assert.ok(!nodes(card).some(n => n.type === 'Dialog'), 'readding the selected directory must not reopen the dialog')
+  assert.ok(!nodes(card).some(n => n.type === h.api.ReviewLinks))
+  nodes(card).filter(n => n.props['aria-label'] === 'api 审阅详情')[1].props.onClick()
+  card = render()
+  assert.equal(nodes(card).find(n => n.type === h.api.ReviewLinks).props.repo, returned, 'the returned repository can be explicitly opened')
+  button(card, '关闭')()
+  assert.ok(!nodes(render()).some(n => n.type === 'Dialog'))
+})
+
+test('Worktree help uses SDK dialog on unmatched sessions and dismisses without altering task selection', () => {
+  const h = harness()
+  h.state.focusedStoredSessionId.set('unknown')
+  const render = () => h.render(h.api.DockPanel)
+  let panel = render()
+  nodes(panel).find(n => n.props['aria-label'] === '查看 Worktree 使用说明').props.onClick()
+  panel = render()
+  assert.equal(text(nodes(panel).find(n => n.type === 'DialogTitle')), 'Worktree 使用说明')
+  assert.equal(nodes(panel).find(n => n.type === 'DialogContent').props.className, 'dev-board db-dialog')
+  assert.match(text(panel), /手工链接状态未知/)
+  nodes(panel).find(n => n.type === 'Dialog').props.onOpenChange(false)
+  panel = render()
+  assert.ok(!nodes(panel).some(n => n.type === 'Dialog'))
+  assert.equal(nodes(panel).find(n => n.type === 'Select').props.value, 'auto')
+  assert.ok(nodes(panel).some(n => n.props.title === '当前会话未匹配任务'))
+})
+
+test('full task identities remain distinct; manual selection survives focus changes and auto resumes following', () => {
+  const h = harness()
+  const other = { ...h.session, id: 'other', label: 'GH-5678', title: 'Another delivery' }
+  h.results['dev-board-sessions'].data.zt_sessions['5678'] = [other]
+  h.results['dev-board'].data.tasks[0].repos = [reviewRepo]
+  const render = () => h.render(h.api.DockPanel)
+  let panel = render()
+  assert.deepEqual(nodes(panel).filter(n => n.type === 'SelectItem' && ['1234', '5678'].includes(n.props.value)).map(text), ['ZT-1234 task', 'GH-5678 · Another delivery'])
+  nodes(panel).filter(n => n.type === 'Select')[1].props.onValueChange('api')
+  panel = render()
+  assert.equal(nodes(panel).filter(n => n.type === 'Select')[1].props.value, 'api')
+  nodes(panel).find(n => n.type === 'Select').props.onValueChange('5678')
+  panel = render()
+  assert.equal(nodes(panel).filter(n => n.type === 'Select')[1].props.value, 'all')
+  h.state.focusedStoredSessionId.set('unknown')
+  panel = render()
+  assert.equal(nodes(panel).find(n => n.type === 'Select').props.value, '5678')
+  assert.match(text(panel), /当前选中 · GH-5678/)
+  nodes(panel).find(n => n.type === 'Select').props.onValueChange('auto')
+  assert.ok(nodes(render()).some(n => n.props.title === '当前会话未匹配任务'))
+  h.state.focusedStoredSessionId.set('stored')
+  assert.match(text(render()), /跟随会话 · ZT-1234/)
+})
+
+test('repository cards contain branch, changes and review together, with compacted directory selection', () => {
+  const h = harness()
+  h.results['dev-board'].data.tasks[0].repos = [reviewRepo]
+  h.results['dev-board-task-changes'].data.files = [{ ...reviewRepo, path: 'src/nested/file.py', status: 'M', added: 3, removed: 2 }]
+  const render = () => h.render(h.api.DockPanel)
+  let panel = render()
+  const card = nodes(panel).find(n => n.type === 'details')
+  assert.equal(card.props.open, true)
+  assert.match(text(card), /api.*1 文件.*feat\/exact.*文件变更.*PR\/MR/)
+  assert.equal(nodes(card).find(n => n.type === h.api.ReviewLinks).props.repo.dir, reviewRepo.dir)
+  const folder = nodes(card).find(n => n.props.row?.type === 'dir')
+  assert.equal(folder.props.row.name, 'src/nested')
+  folder.props.onToggle()
+  panel = render()
+  const file = nodes(panel).find(n => n.props.row?.type === 'file')
+  assert.equal(file.props.row.path, 'src/nested/file.py')
+  file.props.onPick()
+  panel = render()
+  assert.ok(nodes(panel).some(n => n.type.name === 'FileCompare'))
+  assert.deepEqual(plain(h.queries.findLast(q => q.queryKey[0] === 'dev-board-diff').queryKey), ['dev-board-diff', reviewRepo.dir, 'src/nested/file.py'])
+})
+
+test('same repository name in distinct directories keeps each file and comparison identity', () => {
+  const h = harness()
+  const repos = [reviewRepo, { ...reviewRepo, dir: '/second/api' }]
+  h.results['dev-board'].data.tasks[0].repos = repos
+  h.results['dev-board-task-changes'].data.files = repos.map(repo => ({ ...repo, path: 'same.py', status: 'M', added: 1, removed: 0 }))
+  let panel = h.render(h.api.DockPanel)
+  const rows = nodes(panel).filter(n => n.props.row?.type === 'file')
+  assert.equal(rows.length, 2)
+  assert.notEqual(rows[0].key, rows[1].key)
+  rows[1].props.onPick()
+  h.render(h.api.DockPanel)
+  assert.deepEqual(plain(h.queries.findLast(q => q.queryKey[0] === 'dev-board-diff').queryKey), ['dev-board-diff', '/second/api', 'same.py'])
+})
+
+test('dock footer reports review counts honestly across loading, partial, empty and manual-link states', () => {
+  const h = harness()
+  h.results['dev-board'].data.tasks[0].repos = [reviewRepo]
+  const render = () => h.render(h.api.DockPanel)
+  const observe = (data, error = false) => {
+    const observer = nodes(render()).find(n => typeof n.type === 'function' && n.type.name === 'BoardReviewObserver')
+    observer.props.onData(reviewRepo.dir, reviewRepo.branch, data, error)
+    return render()
+  }
+  assert.match(text(render()), /合并进度未知/)
+  let panel = observe({ status: 'ok', reviews: reviewData.reviews })
+  assert.match(text(panel), /1 \/ 2 个审阅已合并/)
+  assert.equal(nodes(panel).find(n => n.props.role === 'progressbar').props['aria-valuenow'], 1)
+  for (const [data, error] of [[{ ...reviewData, status: 'partial' }, false], [{ status: 'empty' }, true], [reviewData, false]]) {
+    panel = observe(data, error)
+    assert.match(text(panel), /合并进度未知/)
+    assert.ok(!nodes(panel).some(n => n.props.role === 'progressbar'))
+  }
+  panel = observe({ status: 'empty', reviews: [], manual: [] })
+  assert.match(text(panel), /无关联审阅/)
+  assert.ok(!nodes(panel).some(n => n.props.role === 'progressbar'))
+  button(panel, '仓库视图 →')()
+  assert.deepEqual(plain(h.calls.at(-1)), ['navigate', '/dev-board'])
+})
+
+test('file comparison loading and errors remain explicit and support returning to repository cards', () => {
+  const h = harness()
+  h.results['dev-board'].data.tasks[0].repos = [reviewRepo]
+  h.results['dev-board-task-changes'].data.files = [{ ...reviewRepo, path: 'file.py', status: 'M', added: 1, removed: 0 }]
+  const render = () => h.render(h.api.DockPanel)
+  nodes(render()).find(n => n.props.row?.type === 'file').props.onPick()
+  h.results['dev-board-diff'] = { isLoading: true }
+  assert.ok(nodes(render()).some(n => n.props.title === '加载文件差异…'))
+  h.results['dev-board-diff'] = { isError: true, error: new Error('diff unavailable') }
+  let panel = render()
+  assert.ok(nodes(panel).some(n => n.props.title === '文件差异加载失败' && n.props.description === 'diff unavailable'))
+  button(panel, '← 返回')()
+  assert.ok(nodes(render()).some(n => n.type === 'details'))
+})
+
+test('board navigation uses host route and search matches actual review title, number and branch', () => {
+  const h = harness()
+  h.results['dev-board'].data.tasks[0].repos = [reviewRepo]
+  const render = () => h.render(h.api.BoardPage)
+  let panel = render()
+  button(panel, '▦ 任务清单')()
+  assert.deepEqual(plain(h.calls.at(-1)), ['navigate', '/tasks'])
+  assert.equal(nodes(panel).find(n => n.props['aria-current'] === 'page').props.children, '⑂ 仓库视图')
+  const observer = nodes(panel).find(n => typeof n.type === 'function' && n.type.name === 'BoardReviewObserver')
+  observer.props.onData(reviewRepo.dir, reviewRepo.branch, { status: 'ok', reviews: [reviewDataFixture()] }, false)
+  for (const query of ['747', 'Review', 'feat/exact', 'v3.6.5']) {
+    nodes(render()).find(n => n.props['aria-label'] === '搜索任务').props.onChange({ target: { value: query } })
+    assert.deepEqual(nodes(render()).filter(n => n.type === h.api.TaskCard).map(n => n.props.task.id), ['1234'])
+  }
 })

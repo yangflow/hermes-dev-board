@@ -32,6 +32,8 @@ Both plugins can be installed,
 enabled and removed independently, without API calls, imports or configuration references to each other.
 No worktree is created automatically.
 
+The Hermes-themed UI shares header/navigation and toolbar sizing with Dev Board. Create/edit tasks in a dialog, click a task title for details and status changes, confirm deletion, and reopen completed tasks. Label management uses a separate dialog. The repository-view navigation opens an installed Dev Board; task storage remains separate.
+
 Canonical data lives in `$HERMES_HOME/task-board/tasks.json`, owned by the gateway backend,
 not desktop storage. CRUD and reorder use `ctx.rest` and the plugin's FastAPI routes
 (`GET/POST /tasks`, `PATCH/DELETE /tasks/{id}`, `POST /tasks/{id}/reorder` with
@@ -44,7 +46,7 @@ creation/update timestamps, order, pin state and session linkage across restarts
 
 Tasks have a `labels` list (default `[]`). Use the edit form's chips to toggle multiple labels; rows display their colors. The **All labels** dropdown combines one label with the status tab and text search, entirely on the client.
 
-Expand **管理标签** to add a name and choose one of eight preset colors: `red`, `orange`, `amber`, `green`, `teal`, `blue`, `violet`, `gray`. Each existing row offers a rename input, color palette, save and delete buttons. Names are trimmed, non-empty strings of at most 40 characters; task labels are deduplicated and must reference existing definitions. Renaming updates all referencing tasks; deleting removes the label from them. Neither operation deletes tasks.
+Open the **管理标签** dialog to add a name and choose one of eight preset colors: `red`, `orange`, `amber`, `green`, `teal`, `blue`, `violet`, `gray`. Each existing row offers a rename input, color palette, save and delete buttons. Names are trimmed, non-empty strings of at most 40 characters; task labels are deduplicated and must reference existing definitions. Renaming updates all referencing tasks; deleting removes the label from them. Neither operation deletes tasks.
 
 Definitions are stored globally within Task Board's `tasks.json` as `"labels": {"bug": "red"}`; each task stores `"labels": ["bug"]`. Older files without these fields default to empty definitions/lists. This data is independent of Dev Board.
 

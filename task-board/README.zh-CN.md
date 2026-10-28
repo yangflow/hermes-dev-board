@@ -27,6 +27,8 @@ cp -r task-board/dashboard ~/.hermes/plugins/task-board/
 例如 `GH-12`、`ZT-1234` 或 `JIRA-100`，不做任何跟踪系统解析。两个插件可独立安装、启用和卸载，互不调用 API、导入代码或读取对方配置。
 任务清单不会自动创建 worktree。
 
+界面沿用 Hermes 主题：页头与仓库视图入口、等高工具栏、三列看板和列表。新建/编辑使用弹窗；点击任务标题查看详情和更新状态；删除需确认，已完成任务可重新打开。标签管理为独立弹窗。仓库视图入口打开已安装的 Dev Board，不共享任务存储。
+
 权威数据由网关后端保存在 `$HERMES_HOME/task-board/tasks.json`，不使用桌面 storage。
 前端通过 `ctx.rest` 调用 FastAPI：`GET/POST /tasks`、`PATCH/DELETE /tasks/{id}`，
 以及 `POST /tasks/{id}/reorder`（`{"direction":"up"}` 或 `{"direction":"down"}`）。
@@ -37,7 +39,7 @@ cp -r task-board/dashboard ~/.hermes/plugins/task-board/
 
 每个任务拥有 `labels` 列表，默认为 `[]`。编辑表单中点击标签色点和名称可多选，任务行显示彩色标签。**All labels** 下拉框可选择一个标签，并与状态页签、文本搜索组合过滤，全部在客户端完成。
 
-展开 **管理标签** 可新建名称并选择八种预设颜色之一：`red`、`orange`、`amber`、`green`、`teal`、`blue`、`violet`、`gray`。已有标签行提供重命名输入、调色板、保存和删除按钮。名称去除首尾空白，必填且最多 40 个字符；任务标签会去重，必须引用已存在的定义。重命名同步更新所有关联任务，删除标签同步移除任务中的引用，不删除任务。
+打开 **管理标签** 弹窗 可新建名称并选择八种预设颜色之一：`red`、`orange`、`amber`、`green`、`teal`、`blue`、`violet`、`gray`。已有标签行提供重命名输入、调色板、保存和删除按钮。名称去除首尾空白，必填且最多 40 个字符；任务标签会去重，必须引用已存在的定义。重命名同步更新所有关联任务，删除标签同步移除任务中的引用，不删除任务。
 
 Task Board 的 `tasks.json` 全局保存 `"labels": {"bug": "red"}` 定义，每个任务保存 `"labels": ["bug"]`。旧文件缺少字段时默认为空定义和空列表。数据完全独立于 Dev Board。
 

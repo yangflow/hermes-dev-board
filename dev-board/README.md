@@ -10,6 +10,8 @@ side-by-side diffs of the task you are currently talking about.
 
 > Screenshots will be added after verification against the running plugin.
 
+The UI shares Hermes theme tokens and workspace navigation with Task Board. Repository details open in a native dialog. The Worktree dock groups branch, file tree and reviews by repository, with a help dialog, full task selector and merge-progress footer. Progress counts actual reviews and preserves unknown/manual-link states.
+
 ## What you get
 
 - **Board page** (sidebar → *Dev Board*): every task across all worktree roots, one card per task,
