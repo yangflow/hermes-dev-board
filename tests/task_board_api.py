@@ -105,5 +105,62 @@ class TasksTests(unittest.TestCase):
         self.assertEqual(len(self.client.get('/tasks').json()['tasks']), 15)
 
     def test_dev_board_has_no_task_crud_routes(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).parents[1] / "dev-board"))
         from dashboard import plugin_api as dev_api
         self.assertFalse(any(route.path.startswith('/tasks') for route in dev_api.router.routes))
+
+
+    def test_label_crud_roundtrip_and_propagation(self):
+        self.assertEqual(self.client.get('/labels').json(), {'labels': {}})
+        self.assertEqual(self.client.post('/labels', json={'name': ' bug ', 'color': 'red'}).json(), {'labels': {'bug': 'red'}})
+        self.client.post('/labels', json={'name': 'docs', 'color': 'blue'})
+        task = self.create(labels=['bug', 'bug', ' docs '])
+        self.assertEqual(task['labels'], ['bug', 'docs'])
+        self.create('second', labels=['bug', 'docs'])
+        edited = self.client.patch('/tasks/' + task['id'], json={'labels': ['bug']}).json()
+        self.assertEqual(edited['labels'], ['bug'])
+        response = self.client.patch('/labels', json={'name': 'bug', 'new_name': 'fix', 'color': 'teal'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['labels'], {'fix': 'teal', 'docs': 'blue'})
+        renamed = self.client.get('/tasks').json()['tasks'][0]
+        self.assertEqual(renamed['labels'], ['fix'])
+        self.assertEqual(self.client.get('/tasks').json()['tasks'][1]['labels'], ['fix', 'docs'])
+        self.assertEqual(renamed['created_at'], task['created_at'])
+        self.assertGreater(renamed['updated_at'], edited['updated_at'])
+        self.assertEqual(json.loads(api._tasks_file().read_text())['labels'], {'fix': 'teal', 'docs': 'blue'})
+        self.assertEqual(self.client.delete('/labels', params={'name': 'fix'}).status_code, 200)
+        self.assertEqual(self.client.get('/tasks').json()['tasks'][0]['labels'], [])
+        self.assertEqual(self.client.get('/labels').json(), {'labels': {'docs': 'blue'}})
+        self.assertEqual(self.client.get('/tasks').json()['tasks'][1]['labels'], ['docs'])
+
+    def test_label_validation_and_legacy_defaults(self):
+        task = self.create()
+        data = json.loads(api._tasks_file().read_text())
+        del data['labels']
+        del data['tasks'][0]['labels']
+        api._tasks_file().write_text(json.dumps(data))
+        self.assertEqual(self.client.get('/tasks').json()['tasks'][0]['labels'], [])
+        self.assertEqual(self.client.get('/labels').json(), {'labels': {}})
+        before = api._tasks_file().read_bytes()
+        for body in [{}, {'name': '', 'color': 'red'}, {'name': 'x' * 41, 'color': 'red'},
+                     {'name': 1, 'color': 'red'}, {'name': 'x', 'color': 'pink'}, {'name': 'x', 'color': []},
+                     {'name': 'x', 'color': 'blue', 'extra': True}]:
+            self.assertEqual(self.client.post('/labels', json=body).status_code, 400, body)
+        for labels in [None, 'bug', [1], [''], ['x' * 41], ['unknown']]:
+            response = self.client.patch('/tasks/' + task['id'], json={'labels': labels})
+            self.assertEqual(response.status_code, 400, labels)
+            self.assertIn('label', response.json()['detail'])
+        self.assertEqual(api._tasks_file().read_bytes(), before)
+        self.client.post('/labels', json={'name': 'bug', 'color': 'red'})
+        self.client.post('/labels', json={'name': 'docs', 'color': 'blue'})
+        before = api._tasks_file().read_bytes()
+        for method, url, body, status in [
+            ('post', '/labels', {'name': 'bug', 'color': 'red'}, 400),
+            ('patch', '/labels', {'name': 'bug', 'new_name': 'docs'}, 400),
+            ('patch', '/labels', {'name': 'missing', 'new_name': 'fix'}, 404),
+            ('patch', '/labels', {'name': 'bug', 'color': 'pink'}, 400),
+        ]:
+            self.assertEqual(getattr(self.client, method)(url, json=body).status_code, status)
+        self.assertEqual(self.client.delete('/labels?name=missing').status_code, 404)
+        self.assertEqual(api._tasks_file().read_bytes(), before)

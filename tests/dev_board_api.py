@@ -12,6 +12,7 @@ from unittest.mock import patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+sys.path.insert(0, str(Path(__file__).parents[1] / "dev-board"))
 from dashboard import plugin_api as api
 
 
