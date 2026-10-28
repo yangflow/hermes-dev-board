@@ -167,7 +167,7 @@ test('task start creates real titled session on current gateway, then reuses sav
   await button(node, '▷ 开始任务')()
   const rpc = h.calls.filter(c => c[0] === 'rpc')
   assert.deepEqual(plain(rpc), [
-    ['rpc', 'session.create', { title: 'GH-1234 Ship feature' }]
+    ['rpc', 'session.create', { title: 'GH-1234 Ship feature', profile: 'default' }]
   ])
   const saved = h.calls.find(c => c[0] === 'rest')[2].body
   assert.equal(saved.session_profile, 'default') // active gateway, not focused chat's dev profile
@@ -210,7 +210,7 @@ test('GH reference and URL roundtrip through form and titled session without par
   assert.equal(nodes(h.renderTasks()).find(n => n.props['aria-label'] === '任务编号(ref)').props.value, body.ref)
   assert.equal(nodes(h.renderTasks()).find(n => n.props['aria-label'] === '链接(url)').props.value, body.url)
   await button(h.renderTasks(), '▷ 开始任务')()
-  assert.deepEqual(plain(h.calls.find(c => c[0] === 'rpc')), ['rpc', 'session.create', { title: 'GH-12 fix login' }])
+  assert.deepEqual(plain(h.calls.find(c => c[0] === 'rpc')), ['rpc', 'session.create', { title: 'GH-12 fix login', profile: 'default' }])
   for (const ref of ['ZT-1234', 'JIRA-100', 'anything', '7']) assert.equal(h.api.taskSessionTitle({ title: 'fix login', ref }), ref + ' fix login')
 })
 
