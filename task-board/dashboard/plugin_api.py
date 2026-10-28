@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, HTTPException
 
 router = APIRouter()
+API_VERSION = 1  # Bump when backend routes change.
 
 
 def _task_url(url: str) -> str:
@@ -139,7 +140,7 @@ def _task_find(data: dict, task_id: str) -> dict:
 @router.get("/tasks")
 def list_tasks() -> dict:
     with _tasks_lock:
-        return {"tasks": _tasks_read()["tasks"]}
+        return {"api_version": API_VERSION, "tasks": _tasks_read()["tasks"]}
 
 
 @router.post("/tasks")

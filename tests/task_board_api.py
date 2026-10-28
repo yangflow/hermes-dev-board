@@ -34,7 +34,7 @@ class TasksTests(unittest.TestCase):
         return result.json()
 
     def test_crud_persistence_and_non_reused_identity(self):
-        self.assertEqual(self.client.get('/tasks').json(), {'tasks': []})
+        self.assertEqual(self.client.get('/tasks').json(), {'api_version': api.API_VERSION, 'tasks': []})
         task = self.create(ref='GH-12', note='note', url='https://github.com/example/repo/issues/12')
         self.assertEqual(task['ref'], 'GH-12')
         self.assertEqual(task['url'], 'https://github.com/example/repo/issues/12')
