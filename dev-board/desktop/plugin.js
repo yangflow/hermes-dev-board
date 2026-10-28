@@ -6,7 +6,7 @@
 import { cn, host, useQuery, ROUTES_AREA, SIDEBAR_NAV_AREA, PALETTE_AREA } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Badge, Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, EmptyState, ScrollArea, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, StatusDot } from '@hermes/plugin-sdk'
+import { Badge, Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, EmptyState, ScrollArea, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, StatusDot, Codicon } from '@hermes/plugin-sdk'
 
 
 function taskPrefix(id, map = {}) {
@@ -130,7 +130,7 @@ const boardStyles = `
 .dev-board.db-select-menu [role="option"] { white-space:normal; overflow-wrap:anywhere; }
 .dev-board.db-dock { container-type:inline-size; }
 .dev-board.db-dock .db-dock-header { display:flex; align-items:center; flex-shrink:0; gap:8px; padding:12px; border-bottom:1px solid var(--ui-stroke-secondary); letter-spacing:.12em; font-size:10px; }
-.dev-board.db-dock .db-worktree-icon { color:var(--ui-accent); background:color-mix(in srgb,var(--ui-accent) 12%,transparent); border-radius:var(--radius-sm); padding:2px 6px; font-size:18px; }
+.dev-board.db-dock .db-worktree-icon { color:var(--ui-accent); background:color-mix(in srgb,var(--ui-accent) 12%,transparent); border-radius:var(--radius-sm); display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; }
 .dev-board.db-dock .db-help { margin-left:auto; width:var(--db-control-height); height:var(--db-control-height); padding:0; }
 .dev-board.db-dock .db-task-selector { padding:12px 12px 0; }
 .dev-board.db-dock .db-dock-context { padding:16px 12px; }
@@ -611,7 +611,7 @@ function DockPanel() {
   const panel = (content) => jsxs('div', { className: 'dev-board db-dock h-full flex flex-col min-h-0', children: [
     boardStyle(),
     jsxs('header', { className: 'db-dock-header', children: [
-      jsx('span', { className: 'db-worktree-icon', 'aria-hidden': true, children: '⑂' }),
+      jsx('span', { className: 'db-worktree-icon', 'aria-hidden': true, children: jsx(Codicon, { name: 'git-branch', size: 16 }) }),
       jsx('strong', { children: 'WORKTREE' }),
       jsx(Button, { variant: 'ghost', size: 'sm', className: 'db-help', 'aria-label': '查看 Worktree 使用说明', ref: helpTrigger, onClick: () => setHelp(true), children: 'ⓘ' })
     ] }),
@@ -676,7 +676,7 @@ function DockPanel() {
         return jsxs('details', { className: 'db-dock-repo', open: true, children: [
           jsxs('summary', { title: repo.dir, children: [jsx('strong', { children: repo.repo }), jsx('span', { className: 'db-meta', children: files.length ? files.length + ' 文件' : '无未提交变更' })] }),
           jsxs('div', { className: 'db-repo-body', children: [
-            jsx('div', { className: 'db-dock-branch', title: repo.branch || '(detached)', children: '⑂ ' + (repo.branch || '(detached)') }),
+            jsxs('div', { className: 'db-dock-branch', title: repo.branch || '(detached)', children: [jsx(Codicon, { name: 'git-branch', size: 12 }), ' ', repo.branch || '(detached)'] }),
             jsx('h3', { className: 'db-section', children: '文件变更' }),
             ...rows.map(row => jsx(TreeRow, {
               row, expanded, onToggle: () => setExpanded(previous => { const next = new Set(previous); next.has(row.key) ? next.delete(row.key) : next.add(row.key); return next }),
@@ -794,7 +794,7 @@ function TaskCard({ task, activeZt, editorName = 'VS Code', expanded = true, onT
       title: details.repo + ' · 代码审阅', description: title,
       children: jsxs('div', { children: [
         jsx('p', { className: 'db-dialog-path', children: details.dir }),
-        jsx('p', { className: 'db-dialog-path', children: '⑂ ' + (details.branch || '(detached)') }),
+        jsxs('p', { className: 'db-dialog-path', children: [jsx(Codicon, { name: 'git-branch', size: 12 }), ' ', details.branch || '(detached)'] }),
         jsx('p', { className: 'db-meta', children: details.last || '暂无提交信息' }),
         jsx(ReviewLinks, { repo: details, showRepo: false })
       ] }) }) : null
@@ -830,7 +830,7 @@ function BoardPage() {
     jsxs('div', { className: 'db-board-content', children: [
       jsxs('header', { className: 'db-page-header', children: [
         jsxs('div', { children: [jsx('div', { className: 'db-eyebrow', children: 'WORKSPACE / TASKS & CODE' }), jsx('h1', { children: '跨仓任务工作区' }), jsx('p', { children: '集中查看任务、关联仓库与合并进度。' })] }),
-        jsx(Button, { variant: 'ghost', size: 'sm', onClick: () => openDock(sessions.data?.zt_sessions || {}), children: '在会话右侧打开' })
+        jsx(Button, { variant: 'secondary', size: 'sm', onClick: () => openDock(sessions.data?.zt_sessions || {}), children: '在会话右侧打开' })
       ] }),
       jsxs('div', { className: 'db-toolbar db-board-toolbar', children: [
         jsx('input', { type: 'search', className: 'db-search', 'aria-label': '搜索任务', placeholder: '搜索任务、仓库或 PR/MR…', value: search, onChange: e => setSearch(e.target.value) }),

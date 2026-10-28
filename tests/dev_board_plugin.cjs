@@ -73,7 +73,7 @@ function harness() {
     window: { addEventListener() {}, removeEventListener() {} },
     ROUTES_AREA: 'routes', SIDEBAR_NAV_AREA: 'nav', PALETTE_AREA: 'palette',
     ...Object.fromEntries(['Badge', 'Button', 'EmptyState', 'ScrollArea', 'Select', 'SelectContent', 'SelectItem',
-      'SelectTrigger', 'SelectValue', 'StatusDot', 'Dialog', 'DialogContent', 'DialogDescription', 'DialogFooter', 'DialogHeader', 'DialogTitle'].map((name) => [name, name]))
+      'SelectTrigger', 'SelectValue', 'StatusDot', 'Codicon', 'Dialog', 'DialogContent', 'DialogDescription', 'DialogFooter', 'DialogHeader', 'DialogTitle'].map((name) => [name, name]))
   })
   const source = fs.readFileSync(path.join(__dirname, '../dev-board/desktop/plugin.js'), 'utf8')
     .replace(/^import .*\n/gm, '').replace('export default {', 'globalThis.plugin = {')
@@ -775,7 +775,7 @@ test('open repository details follow refreshed branch and commit by directory id
     const dialog = nodes(card).find(n => n.type === 'DialogContent')
     assert.ok(dialog, 'refresh keeps the selected repository dialog open')
     const paths = nodes(dialog).filter(n => n.props.className === 'db-dialog-path').map(text)
-    assert.deepEqual(paths, [selected.dir, '⑂ ' + selected.branch])
+    assert.deepEqual(paths.map(value => value.trim()), [selected.dir, selected.branch])
     assert.equal(text(nodes(dialog).find(n => n.props.className === 'db-meta')), selected.last)
     assert.doesNotMatch(text(dialog), new RegExp(previous.last))
     const links = nodes(dialog).find(n => n.type === h.api.ReviewLinks)
