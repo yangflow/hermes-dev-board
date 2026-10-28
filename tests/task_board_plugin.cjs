@@ -30,7 +30,7 @@ function harness(saved = new Map()) {
     },
     getGateway: () => ({ request: async (method, params) => { calls.push(['rpc', method, params]); return method === 'session.create' ? { session_id: 'runtime-task', stored_session_id: 'stored-task' } : {} } }),
     newChat() { throw new Error('newChat only creates a draft') },
-    async openSession(id, options) { calls.push(['session', id, options]) },
+    async openSession(id, options) { assert.equal(options.keepAllProfilesScope, false); calls.push(['session', id, options]) },
     navigate(route) { calls.push(['navigate', route]) }
   }
   const slots = []
@@ -172,12 +172,12 @@ test('task start creates real titled session on current gateway, then reuses sav
   const saved = h.calls.find(c => c[0] === 'rest')[2].body
   assert.equal(saved.session_profile, 'default') // active gateway, not focused chat's dev profile
   assert.equal(h.calls.at(-1)[2].body.status, 'doing')
-  assert.deepEqual(plain(h.calls.find(c => c[0] === 'session')), ['session', 'stored-task', { profile: 'default' }])
+  assert.deepEqual(plain(h.calls.find(c => c[0] === 'session')), ['session', 'stored-task', { profile: 'default', keepAllProfilesScope: false }])
   await button(h.renderTasks(), '▷ 开始任务')()
   assert.equal(h.calls.filter(c => c[1] === 'session.create').length, 1)
   const other = tasksHarness([{ ...todoTask, session_id: 'existing', session_profile: 'work' }])
   await button(other.renderTasks(), '打开会话')()
-  assert.deepEqual(plain(other.calls.find(c => c[0] === 'session')), ['session', 'existing', { profile: 'work' }])
+  assert.deepEqual(plain(other.calls.find(c => c[0] === 'session')), ['session', 'existing', { profile: 'work', keepAllProfilesScope: false }])
   assert.equal(other.calls.filter(c => c[0] === 'rpc').length, 0)
 })
 
@@ -537,7 +537,7 @@ test('list shares task filters and actions and saves view for a fresh page mount
   const list = nodes(panel).find(n => n.props['aria-label'] === '任务列表')
   assert.match(text(list), /Ship feature.*GH-1234.*待办.*Finished.*已完成/)
   await button(list, '打开会话')()
-  assert.deepEqual(plain(h.calls.at(-1)), ['session', 'saved', { profile: 'dev' }])
+  assert.deepEqual(plain(h.calls.at(-1)), ['session', 'saved', { profile: 'dev', keepAllProfilesScope: false }])
   assert.equal(h.calls.filter(c => c[0] === 'rest').length, 0)
   nodes(panel).find(n => n.props.type === 'search').props.onChange({ target: { value: 'Finished' } })
   assert.doesNotMatch(text(h.renderTasks()), /Ship feature/)
@@ -764,7 +764,7 @@ test('linked tasks open existing sessions once without RPC or status writes in b
       assert.equal(nodes(panel).some(n => n.type === 'Button' && ['▷ 开始任务', '开始会话'].includes(text(n))), false)
       if (status !== 'todo') assert.ok(nodes(panel).some(n => n.type === 'Button' && text(n) === (status === 'doing' ? '✓ 标记完成' : '↶ 重新打开')))
       await button(panel, '打开会话')()
-      assert.deepEqual(plain(h.calls), [['session', 'existing', { profile: 'dev' }]])
+      assert.deepEqual(plain(h.calls), [['session', 'existing', { profile: 'dev', keepAllProfilesScope: false }]])
       assert.equal(h.results['task-board-tasks'].data.tasks[0].status, status)
     }
   }
@@ -969,4 +969,58 @@ test('status manager uses cards, on-demand colors, icon actions and row-local de
   const footer = nodes(dialog()).find(n => n.props.className === 'tb-status-footer')
   assert.ok(nodes(footer).some(n => n.props.className === 'tb-status-add'))
   assert.ok(nodes(footer).some(n => n.props.className === 'tb-status-save' && n.props.variant === 'default'))
+})
+
+test('restart confirms unlinking, preserves session and fields, and uses first todo status', async () => {
+  const task = { ...todoTask, status: 'done', session_id: 'old', session_profile: 'dev', session_title: 'Old' }
+  const h = tasksHarness([task])
+  h.results['task-board-tasks'].data.statuses = [{ id: 'inbox', name: '收件箱', category: 'todo' }, { id: 'done', name: '完成', category: 'done' }]
+  button(h.renderTasks(), '重新开始任务')()
+  assert.match(text(h.renderTasks()), /现有会话会保留，不会删除/)
+  button(h.renderTasks(), '取消')()
+  assert.equal(h.calls.length, 0)
+  button(h.renderTasks(), '重新开始任务')()
+  const originalRest = h.rest
+  h.rest = async (...args) => {
+    const result = await originalRest(...args)
+    Object.assign(task, args[1].body)
+    return result
+  }
+  await button(h.renderTasks(), '确认重新开始')()
+  assert.deepEqual(plain(h.calls), [['rest', '/tasks/10', { method: 'PATCH', body: { session_id: '', session_profile: '', session_title: '', status: 'inbox' } }]])
+  assert.equal(task.title, todoTask.title)
+  assert.equal(nodes(h.renderTasks()).some(n => n.type === 'DialogContent'), false)
+  assert.ok(button(h.renderTasks(), '▷ 开始任务'))
+})
+
+test('restart failure retains cached linkage; pending confirmation cannot repeat or dismiss; success clears cache', async () => {
+  const h = tasksHarness()
+  const originalRest = h.rest
+  h.rest = async () => { throw new Error('save refused') }
+  await button(h.renderTasks(), '▷ 开始任务')()
+  button(h.renderTasks(), '重新开始任务')()
+  await button(h.renderTasks(), '确认重新开始')()
+  assert.equal(nodes(h.renderTasks()).find(n => n.type === 'DialogContent').props.banner, 'save refused')
+  button(h.renderTasks(), '取消')()
+  h.rest = originalRest
+  await button(h.renderTasks(), '▷ 开始任务')()
+  assert.equal(h.calls.filter(c => c[0] === 'rpc').length, 1, 'failed reset retains cached session')
+  button(h.renderTasks(), '重新开始任务')()
+  let finish
+  h.rest = () => new Promise(resolve => { finish = resolve })
+  const confirm = button(h.renderTasks(), '确认重新开始')
+  const pending = confirm()
+  await confirm()
+  const dialog = nodes(h.renderTasks()).find(n => n.type === 'Dialog' && n.props.open)
+  dialog.props.onOpenChange(false)
+  assert.ok(nodes(h.renderTasks()).find(n => n.type === 'DialogContent'))
+  assert.equal(nodes(h.renderTasks()).find(n => n.type === 'Button' && text(n) === '取消').props.disabled, true)
+  finish({ ok: true })
+  await pending
+  h.rest = originalRest
+  assert.equal(nodes(h.renderTasks()).some(n => n.type === 'DialogContent'), false)
+  assert.equal(nodes(h.renderTasks()).some(n => n.type === 'Button' && text(n) === '重新开始任务'), false)
+  await button(h.renderTasks(), '▷ 开始任务')()
+  assert.equal(h.calls.filter(c => c[0] === 'rpc').length, 2, 'successful reset discards cached session')
+  assert.equal(h.calls.some(c => c[1] === 'session.delete'), false)
 })
