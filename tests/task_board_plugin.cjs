@@ -66,7 +66,7 @@ function harness(saved = new Map()) {
     window: { addEventListener() {}, removeEventListener() {} },
     ROUTES_AREA: 'routes', SIDEBAR_NAV_AREA: 'nav', PALETTE_AREA: 'palette',
     ...Object.fromEntries(['Badge', 'Button', 'EmptyState', 'ScrollArea', 'Select', 'SelectContent', 'SelectItem',
-      'SelectTrigger', 'SelectValue', 'StatusDot', 'Dialog', 'DialogTrigger', 'DialogContent', 'DialogHeader', 'DialogTitle', 'DialogDescription'].map((name) => [name, name]))
+      'SelectTrigger', 'SelectValue', 'StatusDot', 'Dialog', 'DialogTrigger', 'DialogContent', 'DialogHeader', 'DialogTitle', 'DialogDescription', 'DropdownMenu', 'DropdownMenuTrigger', 'DropdownMenuContent', 'DropdownMenuItem'].map((name) => [name, name]))
   })
   const source = fs.readFileSync(path.join(__dirname, '../task-board/desktop/plugin.js'), 'utf8')
     .replace(/^import .*\n/gm, '').replace('export default {', 'globalThis.plugin = {')
@@ -141,6 +141,8 @@ test('task status and delete call backend; pin and reorder retain backend owners
   await button(h.renderTasks(), '↑')()
   assert.deepEqual(plain(h.calls.at(-1)[2]), { method: 'POST', body: { direction: 'up' } })
   await button(h.renderTasks(), '删除')()
+  assert.equal(h.calls.at(-1)[2].method, 'POST')
+  await button(h.renderTasks(), '确认删除')()
   assert.deepEqual(plain(h.calls.at(-1)), ['rest', '/tasks/10', { method: 'DELETE' }])
 })
 
@@ -292,7 +294,7 @@ test('native task drag changes status, refreshes groups and clears drag feedback
 
 test('task plugin has no dev-board runtime references and has one sidebar entry', () => {
   const source = fs.readFileSync(path.join(__dirname, '../task-board/desktop/plugin.js'), 'utf8')
-  assert.doesNotMatch(source, /dev-board|DEV_BOARD/)
+  assert.doesNotMatch(source, /ctx\.rest\([^)]*dev-board|DEV_BOARD|dev-board-tasks/)
   assert.equal(harness().registrations.filter(r => r.area === 'nav').length, 1)
 })
 
@@ -496,6 +498,7 @@ test('mutation 404 uses shared stale notice and empty board retains all columns'
   const h = tasksHarness()
   h.rest = async () => { throw Object.assign(new Error('Not Found'), { status: 404 }) }
   await button(h.renderTasks(), '删除')()
+  await button(h.renderTasks(), '确认删除')()
   assert.match(text(nodes(h.renderTasks()).find(n => n.props.role === 'alert')), /后端为旧版本/)
   const empty = tasksHarness([]).renderTasks()
   assert.equal(nodes(empty).filter(n => n.type === 'EmptyState').length, 0)
@@ -512,7 +515,7 @@ test('header, compact cards and column create controls follow task board structu
   assert.equal(text(nodes(panel).find(n => n.type === 'h1')), '任务清单')
   assert.match(text(nodes(panel).find(n => n.type === 'header')), /TASK BOARD.*任务清单.*＋新建任务/)
   assert.equal(nodes(panel).find(n => n.props.type === 'search').props.placeholder, '搜索任务名称…')
-  assert.equal(nodes(panel).find(n => n.type === 'summary' && n.props['aria-label'] === '任务操作').props.children, '···')
+  assert.equal(nodes(panel).find(n => n.type === 'Button' && n.props['aria-label'] === '任务操作 Ship feature').props.children, '···')
   assert.equal(text(nodes(panel).find(n => n.type === 'time')), '刚刚')
   for (const [status, label] of Object.entries({ todo: '待办', doing: '进行中', done: '已完成' })) {
     nodes(h.renderTasks()).find(n => n.props['aria-label'] === '新建' + label + '任务').props.onClick()
@@ -589,6 +592,38 @@ test('list status filter never silently hides board columns and empty searches e
   assert.equal(nodes(h.renderTasks()).find(n => n.type === 'EmptyState').props.title, '没有匹配的任务')
 })
 
+test('task create/edit use dialogs, delete requires confirmation, and failures keep the dialog open', async () => {
+  const h = tasksHarness()
+  button(h.renderTasks(), '＋新建任务')()
+  let dialog = nodes(h.renderTasks()).find(n => n.type === 'DialogContent')
+  assert.equal(text(nodes(dialog).find(n => n.type === 'DialogTitle')), '新建任务')
+  assert.equal(nodes(dialog).find(n => n.props['aria-label'] === '备注').type, 'textarea')
+  button(h.renderTasks(), '取消')()
+  button(h.renderTasks(), '删除')()
+  assert.equal(h.calls.length, 0)
+  assert.equal(text(nodes(h.renderTasks()).find(n => n.type === 'DialogTitle')), '删除任务')
+  button(h.renderTasks(), '取消')()
+  assert.equal(h.calls.length, 0)
+  button(h.renderTasks(), '删除')()
+  h.rest = async () => { throw new Error('delete refused') }
+  await button(h.renderTasks(), '确认删除')()
+  assert.equal(text(nodes(h.renderTasks()).find(n => n.type === 'DialogTitle')), '删除任务')
+  assert.equal(nodes(h.renderTasks()).find(n => n.type === 'DialogContent').props.banner, 'delete refused')
+})
+
+test('task details edit status, done tasks reopen, and workspace navigation preserves data ownership', async () => {
+  const h = tasksHarness([{ ...todoTask, status: 'done' }])
+  nodes(h.renderTasks()).find(n => n.props['aria-label'] === '查看任务 Ship feature').props.onClick({})
+  assert.equal(text(nodes(h.renderTasks()).find(n => n.type === 'DialogTitle')), 'Ship feature')
+  await nodes(h.renderTasks()).find(n => n.props['aria-label'] === '更新任务状态').props.onChange({ target: { value: 'todo' } })
+  assert.deepEqual(plain(h.calls.at(-1)), ['rest', '/tasks/10', { method: 'PATCH', body: { status: 'todo' } }])
+  button(h.renderTasks(), '关闭')()
+  await button(h.renderTasks(), '↶ 重新打开')()
+  assert.equal(h.calls.at(-1)[2].body.status, 'todo')
+  button(h.renderTasks(), '⑂ 仓库视图')()
+  assert.deepEqual(plain(h.calls.at(-1)), ['navigate', '/dev-board'])
+})
+
 test('doing primary completes directly without launching a session', async () => {
   const h = tasksHarness([{ ...todoTask, status: 'doing' }])
   await button(h.renderTasks(), '✓ 标记完成')()
@@ -598,7 +633,7 @@ test('doing primary completes directly without launching a session', async () =>
 test('non-todo tasks without sessions retain session launch in overflow', async () => {
   for (const status of ['doing', 'done']) {
     const h = tasksHarness([{ ...todoTask, status }])
-    const more = nodes(h.renderTasks()).find(n => n.props.className === 'tb-more')
+    const more = nodes(h.renderTasks()).find(n => n.type === 'DropdownMenuContent')
     await button(more, '开始会话')()
     assert.equal(h.calls.find(c => c[0] === 'rpc')[1], 'session.create')
     assert.equal(h.calls.at(-1)[2].body.status, 'doing')
