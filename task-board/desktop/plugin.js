@@ -252,8 +252,8 @@ function TasksPage() {
           ] }),
           view === 'list' ? jsx('span', { className: 'tb-list-status', children: taskStatus[task.status] }) : null,
           jsxs('div', { className: 'tb-card-foot', children: [
-            task.status === 'todo' ? !(task.session_id || launchedTasks.has(taskLaunchKey(task))) ? action('▷ 开始任务', () => run(() => startTaskSession(task, body => update(task, body)))) : null : task.status === 'doing' ? action('✓ 标记完成', () => run(() => update(task, { status: 'done' }))) : action('↶ 重新打开', () => run(() => update(task, { status: 'todo' }))),
-            (task.session_id || launchedTasks.has(taskLaunchKey(task))) ? action('打开会话', () => run(async () => { const link = launchedTasks.get(taskLaunchKey(task)) || task; await host.openSession(link.session_id, { profile: link.session_profile }) })) : null,
+            task.status === 'todo' ? !task.session_id ? action('▷ 开始任务', () => run(() => startTaskSession(task, body => update(task, body)))) : null : task.status === 'doing' ? action('✓ 标记完成', () => run(() => update(task, { status: 'done' }))) : action('↶ 重新打开', () => run(() => update(task, { status: 'todo' }))),
+            (task.session_id || task.status !== 'todo' && launchedTasks.has(taskLaunchKey(task))) ? action('打开会话', () => run(async () => { const link = launchedTasks.get(taskLaunchKey(task)) || task; await host.openSession(link.session_id, { profile: link.session_profile }) })) : null,
             jsx('time', { dateTime: task.updated_at || task.created_at, children: relativeTime(task.updated_at || task.created_at) })
           ] })
         ] }, task.id)
