@@ -184,7 +184,7 @@ test('task start creates real titled session on current gateway, then reuses sav
 
 test('task creation/edit form writes fields and URL uses OS opener', async () => {
   const h = tasksHarness([{ ...todoTask, url: 'https://zt.example/task/1234' }])
-  await button(h.renderTasks(), 'GH-1234')()
+  await nodes(h.renderTasks()).find(n => n.props['aria-label'] === '打开原地址').props.onClick({ stopPropagation() {} })
   assert.deepEqual(plain(h.calls.at(-1)), ['external', 'https://zt.example/task/1234'])
   button(h.renderTasks(), '＋新建任务')()
   let panel = h.renderTasks()
@@ -640,7 +640,7 @@ test('non-todo tasks without sessions retain session launch in overflow', async 
 })
 
 
-test('card and list expose source actions without opening details or editing, retaining ref links', async () => {
+test('card and list expose exactly one icon-only source in the header and display ref badges', async () => {
   for (const view of ['board', 'list']) {
     const task = { ...todoTask, url: 'https://example.com/issues/1234' }
     const h = tasksHarness([task, { ...todoTask, id: '11', title: 'No source' }])
@@ -648,6 +648,19 @@ test('card and list expose source actions without opening details or editing, re
     const panel = h.renderTasks()
     const sources = nodes(panel).filter(n => n.type === 'Button' && n.props['aria-label'] === '打开原地址')
     assert.equal(sources.length, 1)
+    const rows = nodes(panel).filter(n => n.props.className === 'tb-task-row')
+    const top = nodes(rows[0]).find(n => n.props.className === 'tb-card-top')
+    assert.equal(top.props.children.at(-1), sources[0])
+    assert.equal(top.props.children.at(-2).type, 'DropdownMenu')
+    assert.equal(text(sources[0]), '')
+    assert.equal(nodes(rows[1]).some(n => n.props['aria-label'] === '打开原地址'), false)
+    for (const foot of nodes(panel).filter(n => n.props.className === 'tb-card-foot')) {
+      assert.equal(nodes(foot).some(n => n.props['aria-label'] === '打开原地址'), false)
+    }
+    const ref = nodes(rows[0]).find(n => n.props.className === 'tb-task-id')
+    assert.equal(ref.type, 'Badge')
+    assert.equal(ref.props.children, task.ref)
+    assert.equal(ref.props.onClick, undefined)
     assert.equal(sources[0].props.title, '打开原地址：' + task.url)
     assert.equal(nodes(sources[0]).find(n => n.type === 'Codicon').props.name, 'link-external')
     let stopped = false
@@ -655,30 +668,29 @@ test('card and list expose source actions without opening details or editing, re
     assert.equal(stopped, true)
     assert.deepEqual(plain(h.calls), [['external', task.url]])
     assert.equal(nodes(h.renderTasks()).some(n => n.type === 'DialogContent'), false)
-    await button(panel, task.ref)()
-    assert.deepEqual(plain(h.calls.at(-1)), ['external', task.url])
+    nodes(h.renderTasks()).find(n => n.props['aria-label'] === '查看任务 Ship feature').props.onClick({})
+    const detail = nodes(h.renderTasks()).find(n => n.type === 'DialogContent')
+    assert.equal(text(nodes(detail).find(n => n.type === 'DialogTitle')), task.title)
+    assert.equal(nodes(detail).some(n => n.props['aria-label'] === '打开原地址' || n.type === 'Codicon' && n.props.name === 'link-external'), false)
+    assert.equal(nodes(h.renderTasks()).filter(n => n.props['aria-label'] === '打开原地址').length, 1)
   }
 })
 
-test('details expose source action and failed external opens use the existing error banner', async () => {
+test('failed header source opens use the existing error banner and can recover', async () => {
   const task = { ...todoTask, url: 'https://example.com/issues/1234' }
   const h = tasksHarness([task])
   h.externalResult = false
-  await nodes(h.renderTasks()).find(n => n.type === 'Button' && n.props['aria-label'] === '打开原地址').props.onClick({ stopPropagation() {} })
+  await nodes(h.renderTasks()).find(n => n.props['aria-label'] === '打开原地址').props.onClick({ stopPropagation() {} })
   assert.match(text(h.renderTasks()), /系统未打开链接/)
   nodes(h.renderTasks()).find(n => n.props['aria-label'] === '查看任务 Ship feature').props.onClick({})
-  let dialog = nodes(h.renderTasks()).find(n => n.type === 'DialogContent')
-  const source = nodes(dialog).find(n => n.type === 'Button' && n.props['aria-label'] === '打开原地址')
-  assert.equal(source.props.title, '打开原地址：' + task.url)
-  assert.equal(nodes(source).find(n => n.type === 'Codicon').props.name, 'link-external')
-  await source.props.onClick({ stopPropagation() {} })
-  dialog = nodes(h.renderTasks()).find(n => n.type === 'DialogContent')
+  const dialog = nodes(h.renderTasks()).find(n => n.type === 'DialogContent')
   assert.equal(dialog.props.banner, '系统未打开链接')
-  assert.equal(text(nodes(dialog).find(n => n.type === 'DialogTitle')), task.title)
+  assert.equal(nodes(dialog).some(n => n.props['aria-label'] === '打开原地址'), false)
+  button(h.renderTasks(), '关闭')()
   h.externalResult = true
-  await nodes(dialog).find(n => n.type === 'Button' && n.props['aria-label'] === '打开原地址').props.onClick({ stopPropagation() {} })
-  assert.equal(nodes(h.renderTasks()).find(n => n.type === 'DialogContent').props.banner, undefined)
-  assert.deepEqual(plain(h.calls), Array(3).fill(['external', task.url]))
+  await nodes(h.renderTasks()).find(n => n.props['aria-label'] === '打开原地址').props.onClick({ stopPropagation() {} })
+  assert.doesNotMatch(text(h.renderTasks()), /系统未打开链接/)
+  assert.deepEqual(plain(h.calls), Array(2).fill(['external', task.url]))
   const noSource = tasksHarness()
   nodes(noSource.renderTasks()).find(n => n.props['aria-label'] === '查看任务 Ship feature').props.onClick({})
   assert.equal(nodes(noSource.renderTasks()).some(n => n.props['aria-label'] === '打开原地址'), false)
