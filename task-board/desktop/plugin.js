@@ -157,6 +157,8 @@ function taskSessionTitle(task) {
 
 const taskLaunchKey = task => JSON.stringify([host.state.profile.get(), task.id, task.created_at])
 
+const openTaskSession = link => host.openSession(link.session_id, { profile: link.session_profile, keepAllProfilesScope: false })
+
 async function startTaskSession(task, update, doingStatus = 'doing') {
   const key = taskLaunchKey(task)
   if (startingTasks.has(key)) return
@@ -175,7 +177,7 @@ async function startTaskSession(task, update, doingStatus = 'doing') {
       launchedTasks.set(key, link)
     }
     await update({ session_id: link.session_id, session_profile: link.session_profile, session_title: link.session_title || '' })
-    await host.openSession(link.session_id, { profile: link.session_profile })
+    await openTaskSession(link)
     await update({ status: doingStatus })
   } finally { startingTasks.delete(key) }
 }
@@ -226,6 +228,7 @@ function TasksPage() {
   const [editing, setEditing] = useState(null)
   const [selectedId, setSelectedId] = useState(null)
   const [deleting, setDeleting] = useState(null)
+  const [restarting, setRestarting] = useState(null)
   const dialogOrigin = useRef(null)
   const menuDialog = useRef(false)
   const [draft, setDraft] = useState({ title: '', ref: '', note: '', url: '', labels: [] })
@@ -305,6 +308,7 @@ function TasksPage() {
           jsxs('div', { className: 'tb-card-top', children: [jsx('button', { type: 'button', className: 'tb-task-title', 'aria-label': '查看任务 ' + task.title, onClick: event => { rememberFocus(event); setSelectedId(task.id) }, children: [task.pinned ? jsx('span', { className: 'tb-pinned', role: 'img', title: '置顶', 'aria-label': '置顶', children: jsx(Codicon, { name: 'pinned', size: 14, 'aria-hidden': true }) }) : null, task.title] }),
             jsxs(DropdownMenu, { onOpenChange: open => { if (open) menuDialog.current = false }, children: [jsx(DropdownMenuTrigger, { asChild: true, children: action('任务操作', event => { menuDialog.current = false; rememberFocus(event) }, { 'aria-label': '任务操作 ' + task.title, className: 'tb-more', children: jsx(Codicon, { name: 'ellipsis', size: 14, 'aria-hidden': true }), onPointerDown: rememberFocus, onKeyDown: rememberFocus }) }), jsxs(DropdownMenuContent, { className: 'tb-root tb-menu', align: 'end', onCloseAutoFocus: event => { if (menuDialog.current) { event.preventDefault(); menuDialog.current = false } }, children: [
             category(task.status) !== 'todo' && !task.session_id && !launchedTasks.has(taskLaunchKey(task)) ? menuAction('开始会话', () => run(() => startTaskSession(task, body => update(task, body), first('doing')))) : null,
+            (task.session_id || launchedTasks.has(taskLaunchKey(task))) ? menuAction('重新开始任务', () => { menuDialog.current = true; setRestarting(task) }) : null,
             menuAction('编辑', () => edit(task)), menuAction('删除', () => { menuDialog.current = true; setDeleting(task) }),
             menuAction(task.pinned ? '取消置顶' : '置顶', () => run(() => update(task, { pinned: !task.pinned }))),
             menuAction(taskStatus[task.status], () => run(() => update(task, { status: nextStatus(task) })), { 'aria-label': '切换状态 ' + task.title }),
@@ -317,7 +321,7 @@ function TasksPage() {
           view === 'list' ? jsx('span', { className: 'tb-list-status', children: taskStatus[task.status] }) : null,
           jsxs('div', { className: 'tb-card-foot', children: [
             category(task.status) === 'todo' ? !task.session_id ? action('▷ 开始任务', () => run(() => startTaskSession(task, body => update(task, body), first('doing')))) : null : category(task.status) === 'doing' ? action(nextStatus(task) === first('done') ? '✓ 标记完成' : '→ ' + taskStatus[nextStatus(task)], () => run(() => update(task, { status: nextStatus(task) }))) : action('↶ 重新打开', () => run(() => update(task, { status: first('todo') }))),
-            (task.session_id || category(task.status) !== 'todo' && launchedTasks.has(taskLaunchKey(task))) ? action('打开会话', () => run(async () => { const link = launchedTasks.get(taskLaunchKey(task)) || task; await host.openSession(link.session_id, { profile: link.session_profile }) })) : null,
+            (task.session_id || category(task.status) !== 'todo' && launchedTasks.has(taskLaunchKey(task))) ? action('打开会话', () => run(async () => { const link = launchedTasks.get(taskLaunchKey(task)) || task; await openTaskSession(link) })) : null,
             jsx('time', { dateTime: task.updated_at || task.created_at, children: relativeTime(task.updated_at || task.created_at) })
           ] })
         ] }, task.id)
@@ -411,6 +415,14 @@ function TasksPage() {
         jsx('div', { className: 'tb-labels', children: (selected.labels || []).map(name => labelChip(name, definitions[name])) }),
         jsx('select', { 'aria-label': '更新任务状态', disabled: busy, value: selected.status, onChange: event => run(() => update(selected, { status: event.target.value })), children: statuses.map(s => [s.id, s.name]).map(([value, label]) => jsx('option', { value, children: label }, value)) }),
         jsxs('div', { className: 'tb-dialog-actions', children: [action('关闭', () => setSelectedId(null)), action('编辑任务', () => { setSelectedId(null); edit(selected) }, { variant: 'outline' })] })
+      ] }) : null }),
+      jsx(Dialog, { open: !!restarting, onOpenChange: open => { if (!open && !busyRef.current) setRestarting(null) }, children: restarting ? jsxs(DialogContent, { className: 'tb-root tb-dialog', banner: failure?.message, onCloseAutoFocus: restoreFocus, children: [
+        jsxs(DialogHeader, { children: [jsx(DialogTitle, { children: '重新开始任务' }), jsx(DialogDescription, { children: '确认断开任务与现有会话的关联？现有会话会保留，不会删除。任务将恢复为待办，之后点击“开始任务”创建会话。' })] }),
+        jsxs('div', { className: 'tb-dialog-actions', children: [action('取消', () => setRestarting(null)), action('确认重新开始', () => run(async () => {
+          await update(restarting, { session_id: '', session_profile: '', session_title: '', status: first('todo') })
+          launchedTasks.delete(taskLaunchKey(restarting))
+          setRestarting(null)
+        }), { variant: 'destructive' })] })
       ] }) : null }),
       jsx(Dialog, { open: !!deleting, onOpenChange: open => { if (!open && !busyRef.current) setDeleting(null) }, children: deleting ? jsxs(DialogContent, { className: 'tb-root tb-dialog', banner: failure?.message, onCloseAutoFocus: restoreFocus, children: [
         jsxs(DialogHeader, { children: [jsx(DialogTitle, { children: '删除任务' }), jsx(DialogDescription, { children: '确定删除「' + deleting.title + '」？关联会话会保留。' })] }),
