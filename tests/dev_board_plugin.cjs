@@ -313,9 +313,9 @@ test('review links show count, number, title, target, state and draft; use ctx.o
   const h = harness()
   h.results['dev-board-reviews'] = { data: reviewData }
   const panel = h.render(h.api.ReviewLinks, { repo: reviewRepo })
-  assert.match(text(panel), /代码审阅 · api · 3 · 已加载/)
-  assert.match(text(panel), /PR #7 Fix request → main · 已合并 · 草稿/)
-  assert.match(text(panel), /MR !8 Next request → release · 已关闭/)
+  assert.match(text(panel), /api · 3 · 已加载/)
+  assert.match(text(panel), /PR #7 Fix request → main 已合并 草稿/)
+  assert.match(text(panel), /MR !8 Next request → release 已关闭/)
   await nodes(panel).find((n) => n.type === 'button' && text(n).startsWith('PR #7')).props.onClick()
   await nodes(panel).find((n) => n.type === 'button' && text(n).startsWith('手工')).props.onClick()
   assert.deepEqual(plain(h.calls), [['external', reviewData.reviews[0].url], ['external', reviewData.manual[0]]])
@@ -366,10 +366,10 @@ test('manual add/remove POST exact options, refresh and failures handled in buil
   let refreshes = 0
   h.results['dev-board-reviews'] = { data: reviewData, refetch: async () => { refreshes++; return h.queries.at(-1).queryFn() } }
   const render = () => h.render(h.api.ReviewLinks, { repo: reviewRepo })
-  button(render(), '刷新审阅')()
+  nodes(render()).find(n => n.props['aria-label'] === '刷新 api 审阅').props.onClick()
   assert.equal(h.calls.at(-1)[1], '/reviews?dir=%2Fworktrees%2Fapi-1234&force=true')
   refreshes = 0
-  await button(render(), '添加链接')()
+  await nodes(render()).find(n => n.props['aria-label'] === '为 api 添加链接').props.onClick()
   let panel = render()
   nodes(panel).find((n) => n.type === 'input').props.onChange({ target: { value: 'https://host/review?x=1&y=2' } })
   panel = render()
@@ -526,7 +526,7 @@ test('all repositories retain identical file paths as distinct selectable identi
   const node = h.render(h.api.ReviewLinks, { repo: reviewRepo })
   assert.match(text(node), /无法推断来源分支/)
   assert.match(text(node), /手工关联均需/)
-  assert.equal(nodes(node).find(n => n.props.children === '添加链接').props.disabled, true)
+  assert.equal(nodes(node).find(n => n.props['aria-label'] === '为 api 添加链接').props.disabled, true)
   assert.doesNotMatch(text(node), /请求失败/)
  })
 
@@ -589,4 +589,57 @@ test('dev board exposes one sidebar entry and no task list route', () => {
  const h = harness()
  assert.equal(h.registrations.filter(r => r.area === 'nav').length, 1)
  assert.ok(!h.registrations.some(r => r.data.path === '/tasks'))
+})
+
+
+test('board presentation keeps one task header, inset repo identity, metadata and accessible actions', () => {
+  const h = harness()
+  const repo = { ...reviewRepo, dirty: 3, last: 'abc123 Full commit subject', branch: 'feature/long/branch/name' }
+  let picked
+  const card = h.render(h.api.TaskCard, { task: { id: '1234', repos: [repo] }, onPickRepo: r => { picked = r } })
+  const head = nodes(card).filter(n => n.props.className === 'db-card-head')
+  assert.equal(head.length, 1)
+  assert.ok(nodes(head[0]).some(n => n.props.className === 'db-title'))
+  assert.equal(nodes(head[0]).find(n => text(n) === '打开会话').props.variant, 'default')
+  assert.equal(nodes(head[0]).find(n => text(n) === '在 VS Code 打开').props.variant, 'secondary')
+  const review = nodes(card).find(n => n.type === h.api.ReviewLinks)
+  assert.equal(review.props.repoHeader.props.className, 'db-repo-head')
+  review.props.repoHeader.props.onClick()
+  assert.equal(picked, repo)
+  assert.ok(nodes(review.props.repoHeader).some(n => n.props.title === '未提交 3'))
+  assert.equal(nodes(review.props.metadata).find(n => n.props.className === 'db-branch').props.title, repo.branch)
+  assert.equal(nodes(review.props.metadata).find(n => n.props.className === 'db-hash').props.children, 'abc123')
+  h.results['dev-board-reviews'] = { data: reviewData }
+  const panel = h.render(h.api.ReviewLinks, review.props)
+  const reviewHead = nodes(panel).find(n => n.props.className === 'db-review-head')
+  assert.ok(nodes(reviewHead).some(n => n.props.className === 'db-repo-head'))
+  for (const label of ['刷新 api 审阅', '为 api 添加链接']) {
+    const action = nodes(reviewHead).find(n => n.props['aria-label'] === label)
+    assert.equal(action.props.title, label)
+    assert.equal(action.props.className, 'db-review-action')
+  }
+  const boardHarness = harness()
+  const board = boardHarness.render(boardHarness.api.BoardPage)
+  assert.equal(nodes(board).find(n => n.props['aria-label'] === '刷新').props.title, '刷新')
+  assert.ok(nodes(board).some(n => n.props.className === 'db-board-count'))
+})
+
+test('review fields retain complete titles and distinguish open, merged and draft badges', () => {
+  const h = harness()
+  const title = '  Full MR title with trailing content  '
+  h.results['dev-board-reviews'] = { data: { status: 'ok', reviews: [
+    { ...reviewData.reviews[0], title },
+    { ...reviewData.reviews[1], state: 'opened' },
+    { ...reviewData.reviews[1], number: 9, state: 'open', draft: true }
+  ] } }
+  const panel = h.render(h.api.ReviewLinks, { repo: reviewRepo })
+  const rows = nodes(panel).filter(n => n.props.className === 'db-review-link db-review-row')
+  assert.equal(rows.length, 3)
+  assert.equal(nodes(rows[0]).find(n => n.props.className === 'db-review-title').props.children, title)
+  assert.equal(rows[0].props.title, title)
+  assert.equal(nodes(rows[0]).find(n => n.props.className === 'db-review-id').type, 'strong')
+  assert.equal(nodes(rows[0]).find(n => n.props.className === 'db-review-target').props.children, '→ main')
+  for (const [i, cls, label] of [[0, 'merged', '已合并'], [1, 'open', '待合并'], [2, 'draft', '草稿']]) {
+    assert.ok(nodes(rows[i]).some(n => n.props.className === 'db-review-badge db-review-' + cls && text(n) === label))
+  }
 })
