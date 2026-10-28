@@ -174,10 +174,10 @@ test('task start creates real titled session on current gateway, then reuses sav
   assert.equal(saved.session_profile, 'default') // active gateway, not focused chat's dev profile
   assert.equal(h.calls.at(-1)[2].body.status, 'doing')
   assert.deepEqual(plain(h.calls.find(c => c[0] === 'session')), ['session', 'stored-task', { profile: 'default' }])
-  await button(h.renderTasks(), '▷ 开始任务')()
+  await button(h.renderTasks(), '打开会话')()
   assert.equal(h.calls.filter(c => c[1] === 'session.create').length, 1)
   const other = tasksHarness([{ ...todoTask, session_id: 'existing', session_profile: 'work' }])
-  await button(other.renderTasks(), '▷ 开始任务')()
+  await button(other.renderTasks(), '打开会话')()
   assert.deepEqual(plain(other.calls.find(c => c[0] === 'session')), ['session', 'existing', { profile: 'work' }])
   assert.equal(other.calls.filter(c => c[0] === 'rpc').length, 0)
 })
@@ -227,7 +227,7 @@ test('task start failures stay visible and retries retain the created identity',
   assert.equal(nodes(h.renderTasks()).find(n => n.props.role === 'alert').props.children, 'save refused')
   assert.equal(h.calls.filter(c => c[0] === 'session').length, 0)
   refuse = false
-  await button(h.renderTasks(), '▷ 开始任务')()
+  await button(h.renderTasks(), '打开会话')()
   assert.equal(h.calls.filter(c => c[1] === 'session.create').length, 1)
   assert.equal(h.calls.find(c => c[0] === 'session')[1], 'stored-task')
   const failed = tasksHarness()
@@ -515,7 +515,7 @@ test('header, compact cards and column create controls follow task board structu
   assert.equal(text(nodes(panel).find(n => n.type === 'h1')), '任务清单')
   assert.match(text(nodes(panel).find(n => n.type === 'header')), /TASK BOARD.*任务清单.*＋新建任务/)
   assert.equal(nodes(panel).find(n => n.props.type === 'search').props.placeholder, '搜索任务名称…')
-  assert.equal(nodes(panel).find(n => n.type === 'Button' && n.props['aria-label'] === '任务操作 Ship feature').props.children, '···')
+  assert.equal(nodes(nodes(panel).find(n => n.type === 'Button' && n.props['aria-label'] === '任务操作 Ship feature')).find(n => n.type === 'Codicon').props.name, 'ellipsis')
   assert.equal(text(nodes(panel).find(n => n.type === 'time')), '刚刚')
   for (const [status, label] of Object.entries({ todo: '待办', doing: '进行中', done: '已完成' })) {
     nodes(h.renderTasks()).find(n => n.props['aria-label'] === '新建' + label + '任务').props.onClick()
@@ -694,4 +694,77 @@ test('failed header source opens use the existing error banner and can recover',
   const noSource = tasksHarness()
   nodes(noSource.renderTasks()).find(n => n.props['aria-label'] === '查看任务 Ship feature').props.onClick({})
   assert.equal(nodes(noSource.renderTasks()).some(n => n.props['aria-label'] === '打开原地址'), false)
+})
+
+test('header action icons share size and scoped square button styling', () => {
+  const panel = tasksHarness([{ ...todoTask, url: 'https://example.com/task' }]).renderTasks()
+  const icons = ['任务操作 Ship feature', '打开原地址'].map(label => {
+    const control = nodes(panel).find(n => n.type === 'Button' && n.props['aria-label'] === label)
+    assert.equal(text(control), '')
+    return nodes(control).find(n => n.type === 'Codicon').props
+  })
+  assert.deepEqual(icons.map(icon => icon.name), ['ellipsis', 'link-external'])
+  assert.ok(icons.every(icon => icon.size === 14 && icon['aria-hidden'] === true))
+  const css = nodes(panel).find(n => n.type === 'style').props.children
+  assert.match(css, /\.tb-root \.tb-more, \.tb-root \.tb-source \{[^}]*width:28px; height:28px; padding:0;/)
+})
+
+test('pin mutation refreshes marker and pinned-first order in each column and list', async () => {
+  for (const view of ['board', 'list']) {
+    const initial = Object.keys({ todo: 1, doing: 1, done: 1 }).flatMap((status, index) => [
+      { ...todoTask, id: status + '-a', title: status + ' first', status, order: index * 2 },
+      { ...todoTask, id: status + '-b', title: status + ' pin', status, order: index * 2 + 1 }
+    ])
+    const h = tasksHarness(initial)
+    let stored = initial.map(task => ({ ...task }))
+    h.rest = async (url, options) => {
+      assert.equal(options.method, 'PATCH')
+      stored = stored.map(task => url === '/tasks/' + task.id ? { ...task, ...options.body } : task)
+    }
+    let refreshes = 0
+    h.results['task-board-tasks'].refetch = async () => {
+      refreshes++
+      h.results['task-board-tasks'].data = { api_version: 1, tasks: stored.map(task => ({ ...task })) }
+    }
+    if (view === 'list') button(h.renderTasks(), '☰ 列表')()
+    for (const status of ['todo', 'doing', 'done']) {
+      const row = nodes(h.renderTasks()).find(n => n.key === status + '-b')
+      assert.equal(nodes(row).some(n => n.props.className === 'tb-pinned'), false)
+      await button(row, '置顶')()
+    }
+    assert.equal(refreshes, 3)
+    const panel = h.renderTasks()
+    const groups = view === 'board' ? nodes(panel).filter(n => n.type === 'section') : [nodes(panel).find(n => n.props.className === 'tb-task-list')]
+    for (const group of groups) {
+      const rows = nodes(group).filter(n => n.props.className === 'tb-task-row')
+      assert.deepEqual(rows.map(n => n.key), view === 'board' ? [rows[0].key.split('-')[0] + '-b', rows[0].key.split('-')[0] + '-a'] : ['todo-b', 'doing-b', 'done-b', 'todo-a', 'doing-a', 'done-a'])
+      for (const row of rows) {
+        const marker = nodes(row).find(n => n.props.className === 'tb-pinned')
+        assert.equal(!!marker, row.key.endsWith('-b'))
+        if (marker) {
+          assert.equal(marker.props.title, '置顶')
+          assert.equal(marker.props['aria-label'], '置顶')
+          assert.equal(nodes(marker).find(n => n.type === 'Codicon').props.name, 'pinned')
+        }
+      }
+    }
+    await button(nodes(panel).find(n => n.key === 'todo-b'), '取消置顶')()
+    assert.equal(nodes(nodes(h.renderTasks()).find(n => n.key === 'todo-b')).some(n => n.props.className === 'tb-pinned'), false)
+  }
+})
+
+test('linked tasks open existing sessions once without RPC or status writes in board and list', async () => {
+  for (const view of ['board', 'list']) {
+    for (const status of ['todo', 'doing', 'done']) {
+      const h = tasksHarness([{ ...todoTask, status, session_id: 'existing', session_profile: 'dev' }])
+      if (view === 'list') button(h.renderTasks(), '☰ 列表')()
+      const panel = h.renderTasks()
+      assert.equal(nodes(panel).filter(n => n.type === 'Button' && text(n) === '打开会话').length, 1)
+      assert.equal(nodes(panel).some(n => n.type === 'Button' && ['▷ 开始任务', '开始会话'].includes(text(n))), false)
+      if (status !== 'todo') assert.ok(nodes(panel).some(n => n.type === 'Button' && text(n) === (status === 'doing' ? '✓ 标记完成' : '↶ 重新打开')))
+      await button(panel, '打开会话')()
+      assert.deepEqual(plain(h.calls), [['session', 'existing', { profile: 'dev' }]])
+      assert.equal(h.results['task-board-tasks'].data.tasks[0].status, status)
+    }
+  }
 })
