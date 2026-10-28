@@ -97,9 +97,6 @@ const taskBoardStyles = `.tb-root { --tb-space:calc(.25rem * var(--spacing-mul, 
 .tb-root .tb-detail-note { white-space:pre-wrap; overflow-wrap:anywhere; }
 .tb-root .tb-form-actions { width:100%; }
 .tb-root .tb-dialog-actions { display:flex; gap:calc(var(--tb-space) * 2); justify-content:flex-end; }
-.tb-root .tb-workspace-nav { display:flex; width:fit-content; gap:var(--tb-space); padding:var(--tb-space); background:var(--tb-surface); border-radius:var(--radius-sm); }
-.tb-root .tb-workspace-nav button { height:28px; padding:0 calc(var(--tb-space) * 3); }
-.tb-root .tb-workspace-nav [aria-current="page"] { background:var(--chrome-action-hover); color:var(--ui-text-primary); }
 .tb-root .tb-stats { display:flex; flex-wrap:wrap; gap:calc(var(--tb-space) * 5); font-size:11px; color:var(--ui-text-secondary); }
 
 .tb-root.tb-dialog { width:calc(100vw - 32px); max-width:560px; }
@@ -252,7 +249,6 @@ function TasksPage() {
   return jsxs(ScrollArea, { className: 'tb-root h-full', children: [taskBoardStyle(),
     jsxs('div', { className: 'tb-tasks', children: [
       jsxs('header', { className: 'tb-page-header', children: [jsxs('div', { children: [jsx('div', { className: 'tb-eyebrow', children: 'WORKSPACE / TASK BOARD' }), jsx('h1', { children: '任务清单' }), jsx('p', { children: '整理待办事项，专注推进每一项任务。' })] }), action('＋新建任务', event => edit(null, undefined, event), { variant: 'default', className: 'tb-primary' })] }),
-      jsxs('nav', { className: 'tb-workspace-nav', 'aria-label': '工作区视图', children: [action('▦ 任务清单', () => {}, { 'aria-current': 'page' }), action('⑂ 仓库视图', () => host.navigate('/dev-board'))] }),
       jsxs('div', { className: 'tb-filters', children: [jsxs('label', { className: 'tb-search', children: [jsx('span', { 'aria-hidden': true, children: '⌕' }), jsx('input', { type: 'search', value: search, placeholder: '搜索任务名称…', 'aria-label': '搜索任务', onChange: e => setSearch(e.target.value) })] }),
       jsx('select', { value: labelFilter, 'aria-label': '标签筛选', onChange: e => setLabelFilter(e.target.value), children: [
         jsx('option', { value: '', children: '全部标签' }), ...Object.keys(definitions).map(name => jsx('option', { value: name, children: name }, name))

@@ -928,14 +928,12 @@ test('file comparison loading and errors remain explicit and support returning t
   assert.ok(nodes(render()).some(n => n.type === 'details'))
 })
 
-test('board navigation uses host route and search matches actual review title, number and branch', () => {
+test('board has no header switcher and search matches actual review title, number and branch', () => {
   const h = harness()
   h.results['dev-board'].data.tasks[0].repos = [reviewRepo]
   const render = () => h.render(h.api.BoardPage)
   let panel = render()
-  button(panel, '▦ 任务清单')()
-  assert.deepEqual(plain(h.calls.at(-1)), ['navigate', '/tasks'])
-  assert.equal(nodes(panel).find(n => n.props['aria-current'] === 'page').props.children, '⑂ 仓库视图')
+  assert.equal(nodes(panel).some(n => n.props['aria-label'] === '工作区视图'), false)
   const observer = nodes(panel).find(n => typeof n.type === 'function' && n.type.name === 'BoardReviewObserver')
   observer.props.onData(reviewRepo.dir, reviewRepo.branch, { status: 'ok', reviews: [reviewDataFixture()] }, false)
   for (const query of ['747', 'Review', 'feat/exact', 'v3.6.5']) {

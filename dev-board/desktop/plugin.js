@@ -123,8 +123,6 @@ const boardStyles = `
 .dev-board.db-page .db-board-toolbar > input { background:var(--ui-bg-elevated); }
 .dev-board.db-page .db-board-toolbar > select { background:var(--ui-bg-elevated); }
 .dev-board.db-page .db-board-toolbar > button[aria-label="刷新"] { width:var(--db-control-height); padding:0; }
-.dev-board .db-view-nav { display:flex; align-items:stretch; gap:4px; width:fit-content; max-width:100%; padding:4px; height:var(--db-control-height); background:color-mix(in srgb,var(--ui-text-secondary) 8%,transparent); border-radius:var(--radius-md); }
-.dev-board .db-view-nav > button { height:100%; min-height:0; padding:0 12px; border-radius:var(--radius-sm); }
 .dev-board.db-dialog { width:min(560px,92vw); max-width:92vw; }
 .dev-board.db-dialog .db-dialog-path { font-family:monospace; overflow-wrap:anywhere; color:var(--ui-text-secondary); }
 .dev-board.db-dialog .db-help-copy p { margin:0 0 12px; line-height:1.7; color:var(--ui-text-secondary); }
@@ -833,10 +831,6 @@ function BoardPage() {
       jsxs('header', { className: 'db-page-header', children: [
         jsxs('div', { children: [jsx('div', { className: 'db-eyebrow', children: 'WORKSPACE / TASKS & CODE' }), jsx('h1', { children: '跨仓任务工作区' }), jsx('p', { children: '集中查看任务、关联仓库与合并进度。' })] }),
         jsx(Button, { variant: 'ghost', size: 'sm', onClick: () => openDock(sessions.data?.zt_sessions || {}), children: '在会话右侧打开' })
-      ] }),
-      jsxs('nav', { className: 'db-view-nav', 'aria-label': '工作区视图', children: [
-        jsx(Button, { variant: 'ghost', size: 'sm', onClick: () => host.navigate('/tasks'), children: '▦ 任务清单' }),
-        jsx(Button, { variant: 'secondary', size: 'sm', 'aria-current': 'page', children: '⑂ 仓库视图' })
       ] }),
       jsxs('div', { className: 'db-toolbar db-board-toolbar', children: [
         jsx('input', { type: 'search', className: 'db-search', 'aria-label': '搜索任务', placeholder: '搜索任务、仓库或 PR/MR…', value: search, onChange: e => setSearch(e.target.value) }),
