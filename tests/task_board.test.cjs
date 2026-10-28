@@ -1,0 +1,307 @@
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const path = require('node:path')
+const vm = require('node:vm')
+const { test } = require('node:test')
+
+function atom(value) {
+  const listeners = new Set()
+  return {
+    get: () => value,
+    set(next) { value = next; for (const fn of listeners) fn(next) },
+    subscribe(fn) { listeners.add(fn); fn(value); return () => listeners.delete(fn) },
+    count: () => listeners.size
+  }
+}
+
+function harness() {
+  const notices = [], calls = [], queries = [], registrations = [], cleanups = []
+  const state = {
+    focusedStoredSessionId: atom('stored'), focusedSessionId: atom('runtime'),
+    focusedSessionProfile: atom('dev'), profile: atom('default')
+  }
+  const results = {}
+  const host = {
+    state,
+    notify(input) {
+      assert.equal(typeof input.message, 'string')
+      assert.ok(['error', 'warning', 'info', 'success'].includes(input.kind))
+      notices.push(input)
+    },
+    getGateway: () => ({ request: async (method, params) => { calls.push(['rpc', method, params]); return method === 'session.create' ? { session_id: 'runtime-task', stored_session_id: 'stored-task' } : {} } }),
+    newChat() { throw new Error('newChat only creates a draft') },
+    async openSession(id, options) { calls.push(['session', id, options]) },
+    navigate(route) { calls.push(['navigate', route]) }
+  }
+  const slots = []
+  let cursor = 0, pending = [], dirty = false
+  const jsx = (type, props, key) => {
+    if (type === 'EmptyState') assert.equal(props.hint, undefined, 'SDK EmptyState supports description, not hint')
+    return { type, props: props || {}, key }
+  }
+  const context = vm.createContext({
+    URL, host, jsx, jsxs: jsx, cn: (...args) => args.filter(Boolean).join(' '),
+    useState(initial) {
+      const i = cursor++
+      if (!slots[i]) slots[i] = { value: typeof initial === 'function' ? initial() : initial }
+      return [slots[i].value, (next) => {
+        next = typeof next === 'function' ? next(slots[i].value) : next
+        if (!Object.is(next, slots[i].value)) { slots[i].value = next; dirty = true }
+      }]
+    },
+    useRef(initial) {
+      const i = cursor++
+      if (!slots[i]) slots[i] = { current: initial }
+      return slots[i]
+    },
+    useEffect(fn, deps) {
+      const i = cursor++, previous = slots[i]
+      if (!previous || deps.some((v, n) => !Object.is(v, previous.deps[n]))) {
+        slots[i] = { deps, cleanup: previous?.cleanup }
+        pending.push(() => { slots[i].cleanup?.(); slots[i].cleanup = fn() })
+      }
+    },
+    useMemo: (fn) => fn(),
+    useQuery(options) { queries.push(options); return results[options.queryKey[0]] || {} },
+    window: { addEventListener() {}, removeEventListener() {} },
+    ROUTES_AREA: 'routes', SIDEBAR_NAV_AREA: 'nav', PALETTE_AREA: 'palette',
+    ...Object.fromEntries(['Badge', 'Button', 'EmptyState', 'ScrollArea', 'Select', 'SelectContent', 'SelectItem',
+      'SelectTrigger', 'SelectValue', 'StatusDot'].map((name) => [name, name]))
+  })
+  const source = fs.readFileSync(path.join(__dirname, '../task-board/desktop/plugin.js'), 'utf8')
+    .replace(/^import .*\n/gm, '').replace('export default {', 'globalThis.plugin = {')
+  vm.runInContext(source + '\nglobalThis.api = { TasksPage, startTaskSession, taskSessionTitle };', context)
+  const h = {
+    api: context.api, state, host, notices, calls, queries, results, registrations,
+    unload() { cleanups.forEach((fn) => fn()) },
+    rest: async (url, options) => {
+      calls.push(['rest', url, options])
+      return { ok: true }
+    },
+    render(fn, props) {
+      let node, rounds = 0
+      do {
+        dirty = false; cursor = 0; pending = []
+        node = fn(props)
+        pending.forEach((effect) => effect())
+        assert.ok(++rounds < 20, 'hook render must settle')
+      } while (dirty)
+      return node
+    },
+    dispose() { slots.forEach((slot) => slot?.cleanup?.()) }
+  }
+  context.plugin.register({ onDispose: (fn) => cleanups.push(fn), os: { openExternal: async (url) => { calls.push(['external', url]); return true } }, rest: (...args) => h.rest(...args), register: (entry) => registrations.push(entry) })
+  return h
+}
+
+function nodes(node) {
+  if (!node || typeof node !== 'object') return []
+  if (Array.isArray(node)) return node.flatMap(nodes)
+  return [node, ...nodes(node.props?.children)]
+}
+function text(node) {
+  if (Array.isArray(node)) return node.map(text).join(' ')
+  if (node && typeof node === 'object') return text(node.props?.children)
+  return node == null ? '' : String(node)
+}
+function button(node, label) {
+  const found = nodes(node).find((n) => n.type === 'Button' && text(n) === label)
+  assert.ok(found, 'button: ' + label)
+  return found.props.onClick
+}
+const plain = (value) => JSON.parse(JSON.stringify(value))
+
+const todoTask = { id: '10', title: 'Ship feature', ref: 'GH-1234', note: 'remember this', pinned: false, status: 'todo', order: 0 }
+function tasksHarness(tasks = [todoTask]) {
+  const h = harness()
+  h.results['task-board-tasks'] = { data: { tasks }, refetch: async () => {} }
+  h.renderTasks = () => h.render(h.api.TasksPage)
+  return h
+}
+
+test('task page registers route, nav and palette; renders backend data and empty state', async () => {
+  const h = tasksHarness()
+  assert.equal(h.registrations.find(r => r.id === 'tasks-page').data.path, '/tasks')
+  assert.equal(h.registrations.find(r => r.id === 'tasks-nav').data.label, 'Task Board')
+  assert.equal(h.registrations.find(r => r.id === 'tasks-nav').data.codicon, 'checklist')
+  assert.equal(h.registrations.find(r => r.id === 'tasks-open').data.label, 'Task Board：打开任务清单')
+  assert.match(text(h.renderTasks()), /Ship feature.*GH-1234.*remember this/)
+  await h.queries.find(q => q.queryKey[0] === 'task-board-tasks').queryFn()
+  assert.equal(h.calls.at(-1)[1], '/tasks')
+  assert.equal(nodes(tasksHarness([]).renderTasks()).find(n => n.type === 'EmptyState').props.title, '暂无任务')
+})
+
+test('task status and delete call backend; pin and reorder retain backend ownership', async () => {
+  const h = tasksHarness()
+  await nodes(h.renderTasks()).find(n => n.props['aria-label'] === '切换状态 Ship feature').props.onClick()
+  assert.deepEqual(plain(h.calls.at(-1)), ['rest', '/tasks/10', { method: 'PATCH', body: { status: 'doing' } }])
+  await button(h.renderTasks(), '置顶')()
+  assert.equal(h.calls.at(-1)[2].body.pinned, true)
+  await button(h.renderTasks(), '↑')()
+  assert.deepEqual(plain(h.calls.at(-1)[2]), { method: 'POST', body: { direction: 'up' } })
+  await button(h.renderTasks(), '删除')()
+  assert.deepEqual(plain(h.calls.at(-1)), ['rest', '/tasks/10', { method: 'DELETE' }])
+})
+
+test('task filters and search are client-side, pinned rows sort first', () => {
+  const h = tasksHarness([todoTask, { ...todoTask, id: '11', title: 'Finished', note: '', status: 'done', pinned: true }])
+  let panel = h.renderTasks()
+  assert.match(text(nodes(panel).find(n => n.type === 'section' && n.props['aria-label'] === '已完成')), /置顶.*Finished/)
+  nodes(panel).find(n => n.props.role === 'tab' && text(n) === '已完成').props.onClick()
+  panel = h.renderTasks()
+  assert.match(text(panel), /Finished/)
+  assert.doesNotMatch(text(panel), /Ship feature/)
+  nodes(panel).find(n => n.props.role === 'tab' && text(n) === '全部').props.onClick()
+  nodes(h.renderTasks()).find(n => n.props.type === 'search').props.onChange({ target: { value: 'REMEMBER' } })
+  assert.match(text(h.renderTasks()), /Ship feature/)
+  assert.doesNotMatch(text(h.renderTasks()), /Finished/)
+  assert.equal(h.calls.length, 0)
+})
+
+test('task start creates real titled session on current gateway, then reuses saved session', async () => {
+  const h = tasksHarness()
+  const node = h.renderTasks()
+  await button(node, '开始会话')()
+  const rpc = h.calls.filter(c => c[0] === 'rpc')
+  assert.deepEqual(plain(rpc), [
+    ['rpc', 'session.create', { title: 'GH-1234 Ship feature' }]
+  ])
+  const saved = h.calls.find(c => c[0] === 'rest')[2].body
+  assert.equal(saved.session_profile, 'default') // active gateway, not focused chat's dev profile
+  assert.equal(h.calls.at(-1)[2].body.status, 'doing')
+  assert.deepEqual(plain(h.calls.find(c => c[0] === 'session')), ['session', 'stored-task', { profile: 'default' }])
+  await button(h.renderTasks(), '打开会话')()
+  assert.equal(h.calls.filter(c => c[1] === 'session.create').length, 1)
+  const other = tasksHarness([{ ...todoTask, session_id: 'existing', session_profile: 'work' }])
+  await button(other.renderTasks(), '打开会话')()
+  assert.deepEqual(plain(other.calls.find(c => c[0] === 'session')), ['session', 'existing', { profile: 'work' }])
+  assert.equal(other.calls.filter(c => c[0] === 'rpc').length, 0)
+})
+
+test('task creation/edit form writes fields and URL uses OS opener', async () => {
+  const h = tasksHarness([{ ...todoTask, url: 'https://zt.example/task/1234' }])
+  await button(h.renderTasks(), 'GH-1234')()
+  assert.deepEqual(plain(h.calls.at(-1)), ['external', 'https://zt.example/task/1234'])
+  button(h.renderTasks(), '新建任务')()
+  let panel = h.renderTasks()
+  nodes(panel).find(n => n.props['aria-label'] === '标题').props.onChange({ target: { value: 'New task' } })
+  panel = h.renderTasks()
+  await nodes(panel).find(n => n.type === 'form').props.onSubmit({ preventDefault() {} })
+  assert.equal(h.calls.at(-1)[1], '/tasks')
+  assert.equal(h.calls.at(-1)[2].body.title, 'New task')
+  assert.equal(h.api.taskSessionTitle({ ...todoTask, ref: '1234' }), '1234 Ship feature')
+  assert.equal(h.api.taskSessionTitle({ ...todoTask, ref: '' }), 'Ship feature')
+})
+
+test('GH reference and URL roundtrip through form and titled session without parsing', async () => {
+  const h = tasksHarness([])
+  button(h.renderTasks(), '新建任务')()
+  for (const [label, value] of [['标题', 'fix login'], ['任务编号(ref)', 'GH-12'], ['链接(url)', 'https://github.com/example/repo/issues/12']]) {
+    nodes(h.renderTasks()).find(n => n.props['aria-label'] === label).props.onChange({ target: { value } })
+  }
+  await nodes(h.renderTasks()).find(n => n.type === 'form').props.onSubmit({ preventDefault() {} })
+  const body = plain(h.calls.at(-1)[2].body)
+  assert.deepEqual(body, { title: 'fix login', ref: 'GH-12', note: '', url: 'https://github.com/example/repo/issues/12' })
+  h.results['task-board-tasks'].data.tasks = [{ ...todoTask, ...body }]
+  button(h.renderTasks(), '编辑')()
+  assert.equal(nodes(h.renderTasks()).find(n => n.props['aria-label'] === '任务编号(ref)').props.value, body.ref)
+  assert.equal(nodes(h.renderTasks()).find(n => n.props['aria-label'] === '链接(url)').props.value, body.url)
+  await button(h.renderTasks(), '开始会话')()
+  assert.deepEqual(plain(h.calls.find(c => c[0] === 'rpc')), ['rpc', 'session.create', { title: 'GH-12 fix login' }])
+  for (const ref of ['ZT-1234', 'JIRA-100', 'anything', '7']) assert.equal(h.api.taskSessionTitle({ title: 'fix login', ref }), ref + ' fix login')
+})
+
+test('task start failures stay visible and retries retain the created identity', async () => {
+  const h = tasksHarness()
+  let refuse = true
+  const originalRest = h.rest
+  h.rest = async (...args) => {
+    if (refuse) throw new Error('save refused')
+    return originalRest(...args)
+  }
+  await button(h.renderTasks(), '开始会话')()
+  assert.equal(nodes(h.renderTasks()).find(n => n.props.role === 'alert').props.children, 'save refused')
+  assert.equal(h.calls.filter(c => c[0] === 'session').length, 0)
+  refuse = false
+  await button(h.renderTasks(), '打开会话')()
+  assert.equal(h.calls.filter(c => c[1] === 'session.create').length, 1)
+  assert.equal(h.calls.find(c => c[0] === 'session')[1], 'stored-task')
+  const failed = tasksHarness()
+  failed.host.getGateway = () => ({ request: async () => { throw new Error('create failed') } })
+  await button(failed.renderTasks(), '开始会话')()
+  assert.equal(nodes(failed.renderTasks()).find(n => n.props.role === 'alert').props.children, 'create failed')
+  assert.equal(failed.calls.length, 0)
+})
+
+test('task launch ignores concurrent stale clicks and marks doing only after open succeeds', async () => {
+  const h = tasksHarness()
+  let finish
+  h.host.getGateway = () => ({ request: () => new Promise(resolve => { finish = resolve }) })
+  const launch = button(h.renderTasks(), '开始会话')
+  const pending = launch()
+  await launch()
+  finish({ stored_session_id: 'one', session_id: 'runtime-one' })
+  await pending
+  assert.equal(h.calls.filter(c => c[0] === 'session').length, 1)
+  const failed = tasksHarness()
+  failed.host.openSession = async () => { throw new Error('open failed') }
+  await button(failed.renderTasks(), '开始会话')()
+  assert.equal(failed.calls.filter(c => c[0] === 'rest').length, 1)
+  assert.equal(failed.calls.find(c => c[0] === 'rest')[2].body.status, undefined)
+  assert.equal(nodes(failed.renderTasks()).find(n => n.props.role === 'alert').props.children, 'open failed')
+})
+
+
+test('native task drag changes status, refreshes groups and clears drag feedback', async () => {
+  const h = tasksHarness()
+  const query = h.results['task-board-tasks']
+  let refreshes = 0
+  query.refetch = async () => { refreshes++; query.data.tasks = [{ ...todoTask, status: 'doing' }] }
+  const data = new Map()
+  const event = { dataTransfer: { setData: (key, value) => data.set(key, value), getData: key => data.get(key) }, preventDefault() { this.prevented = true } }
+  const row = panel => nodes(panel).find(n => n.props.draggable === true)
+  const zone = (panel, label) => nodes(panel).find(n => n.type === 'section' && n.props['aria-label'] === label)
+  row(h.renderTasks()).props.onDragStart(event)
+  assert.equal(data.get('text/plain'), todoTask.id)
+  assert.equal(event.dataTransfer.effectAllowed, 'move')
+  assert.match(row(h.renderTasks()).props.className, /tb-dragging/)
+  zone(h.renderTasks(), '进行中').props.onDragOver(event)
+  assert.equal(event.prevented, true)
+  assert.equal(event.dataTransfer.dropEffect, 'move')
+  assert.match(zone(h.renderTasks(), '进行中').props.className, /tb-drop-target/)
+  await zone(h.renderTasks(), '进行中').props.onDrop(event)
+  assert.deepEqual(plain(h.calls.at(-1)), ['rest', '/tasks/10', { method: 'PATCH', body: { status: 'doing' } }])
+  assert.equal(refreshes, 1)
+  const panel = h.renderTasks()
+  assert.doesNotMatch(text(zone(panel, '待办')), /Ship feature/)
+  assert.match(text(zone(panel, '进行中')), /Ship feature/)
+  assert.doesNotMatch(row(panel).props.className, /tb-dragging/)
+  row(panel).props.onDragStart(event)
+  event.prevented = false
+  zone(h.renderTasks(), '进行中').props.onDragOver(event)
+  assert.equal(event.prevented, false)
+  await zone(h.renderTasks(), '进行中').props.onDrop(event)
+  assert.equal(h.calls.length, 1)
+  row(h.renderTasks()).props.onDragStart(event)
+  row(h.renderTasks()).props.onDragEnd()
+  await zone(h.renderTasks(), '已完成').props.onDrop(event)
+  assert.equal(h.calls.length, 1)
+})
+
+test('task plugin has no dev-board runtime references and has one sidebar entry', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../task-board/desktop/plugin.js'), 'utf8')
+  assert.doesNotMatch(source, /dev-board|DEV_BOARD/)
+  assert.equal(harness().registrations.filter(r => r.area === 'nav').length, 1)
+})
+
+test('task edit submits existing identity and palette navigates independently', async () => {
+  const h = tasksHarness()
+  button(h.renderTasks(), '编辑')()
+  nodes(h.renderTasks()).find(n => n.props['aria-label'] === '标题').props.onChange({ target: { value: 'Edited task' } })
+  await nodes(h.renderTasks()).find(n => n.type === 'form').props.onSubmit({ preventDefault() {} })
+  assert.equal(h.calls.at(-1)[1], '/tasks/10')
+  assert.equal(h.calls.at(-1)[2].method, 'PATCH')
+  assert.equal(h.calls.at(-1)[2].body.title, 'Edited task')
+  h.registrations.find(r => r.id === 'tasks-open').data.run()
+  assert.deepEqual(plain(h.calls.at(-1)), ['navigate', '/tasks'])
+})
