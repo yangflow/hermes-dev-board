@@ -3,11 +3,24 @@ import { jsx, jsxs } from 'react/jsx-runtime'
 import { useRef, useState } from 'react'
 
 const labelPalette = { red: '#f87171', orange: '#fb923c', amber: '#fbbf24', green: '#4ade80', teal: '#2dd4bf', blue: '#60a5fa', violet: '#a78bfa', gray: '#9ca3af' }
-const labelChip = (name, color) => jsxs('span', { className: 'tb-label', style: { backgroundColor: labelPalette[color] || labelPalette.gray, color: '#17202a' }, children: [jsx('span', { className: 'tb-label-dot', 'aria-hidden': true, style: { backgroundColor: '#17202a' } }), name] })
+const labelChip = (name, color) => jsxs('span', { className: 'tb-label', style: { color: 'var(--ui-text-secondary)' }, children: [jsx('span', { className: 'tb-label-dot', 'aria-hidden': true, style: { backgroundColor: labelPalette[color] || labelPalette.gray } }), name] })
 
 let taskFetch = null
 let openExternal = null
-const rest = (path, options) => taskFetch(path, options)
+const API_VERSION = 1 // Bump when backend routes change.
+const staleMessage = '后端为旧版本：需重启/重载网关后生效'
+const backendError = (data, error) => data && data.api_version !== API_VERSION || error && (error.status === 404 || error.statusCode === 404 || /^404\b/.test(error.message || '')) ? new Error(staleMessage) : error
+const rest = async (path, options) => {
+  try {
+    const data = await taskFetch(path, options)
+    const failure = backendError(path === '/tasks' && !options ? data : null)
+    if (failure) throw failure
+    return data
+  } catch (error) {
+    console.error('Task Board request failed:', path, error)
+    throw backendError(null, error)
+  }
+}
 const taskBoardStyles = `.tb-root { min-width:0; width:100%; max-width:100%; box-sizing:border-box; color:var(--ui-text-primary); font-size:12px; }
 .tb-root *, .tb-root *::before, .tb-root *::after { box-sizing:border-box; }
 .tb-root button, .tb-root input, .tb-root select { max-width:100%; font:inherit; }
@@ -29,8 +42,8 @@ const taskBoardStyles = `.tb-root { min-width:0; width:100%; max-width:100%; box
 .tb-root .tb-task-title { flex:1 1 120px; min-width:0; overflow-wrap:anywhere; font-weight:600; }
 .tb-root .tb-task-note { white-space:pre-wrap; overflow-wrap:anywhere; color:var(--ui-text-secondary); padding:4px 0; }
 .tb-root .tb-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:6px; min-width:0; }
-.tb-root .tb-title { font-size:14px; font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1 1 100%; }
-.tb-root select, .tb-root input { min-width:0; flex:1; padding:5px 6px; border:1px solid var(--ui-stroke-secondary); border-radius:4px; color:var(--ui-text-primary); background:transparent; }
+.tb-root .tb-title { font-size:14px; font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1 1 100px; }
+.tb-root select, .tb-root input { min-width:0; flex:1; height:32px; padding:5px 8px; border:1px solid var(--ui-stroke-secondary); border-radius:4px; color:var(--ui-text-primary); background:transparent; }
 .tb-root .tb-section { margin:10px 4px 4px; padding:6px 0; border-bottom:1px solid var(--ui-stroke-secondary); color:var(--ui-text-secondary); font-size:12px; font-weight:600; }
 .tb-root form { display:flex; gap:6px; align-items:center; min-width:0; }
 .tb-root .tb-label { display:inline-flex; align-items:center; gap:4px; border-radius:10px; padding:2px 7px; max-width:100%; overflow-wrap:anywhere; }
@@ -38,13 +51,24 @@ const taskBoardStyles = `.tb-root { min-width:0; width:100%; max-width:100%; box
 .tb-root .tb-labels { display:flex; flex-wrap:wrap; gap:4px; width:100%; min-width:0; }
 .tb-root .tb-label-choice { border:2px solid transparent; border-radius:12px; padding:1px; background:transparent; }
 .tb-root .tb-label-choice[aria-pressed="true"] { border-color:var(--ui-text-primary); }
-.tb-root .tb-label-manager { border:1px solid var(--ui-stroke-secondary); border-radius:6px; padding:6px; min-width:0; }
+.tb-root .tb-label-manager summary { cursor:pointer; color:var(--ui-text-secondary); }
+.tb-root .tb-label-manager { border:1px solid var(--ui-stroke-secondary); border-radius:8px; padding:12px; min-width:0; }
 .tb-root .tb-label-manager form { flex-wrap:wrap; margin:6px 0; }
 .tb-root .tb-label-manager input { flex:1 1 100px; }
 .tb-root .tb-palette { display:flex; gap:4px; flex-wrap:wrap; }
 .tb-root .tb-palette button { width:24px; height:24px; padding:2px; border:2px solid transparent; border-radius:50%; }
 .tb-root .tb-palette button[aria-pressed="true"] { border-color:var(--ui-text-primary); }
 .tb-root .tb-palette span { display:block; width:100%; height:100%; border-radius:50%; }
+.tb-root .tb-tabs { display:flex; gap:2px; padding:3px; border:1px solid var(--ui-stroke-secondary); border-radius:8px; }
+.tb-root .tb-tabs button { flex:1; min-width:0; padding:5px; border:0; border-radius:5px; background:transparent; color:var(--ui-text-secondary); }
+.tb-root .tb-tabs button[aria-selected="true"] { background:var(--chrome-action-hover); color:var(--ui-text-primary); font-weight:600; }
+.tb-root .tb-filters { display:flex; gap:8px; min-width:0; }
+.tb-root .tb-filters input { flex:2; width:0; }
+.tb-root .tb-filters select { flex:1; width:0; }
+.tb-root .tb-primary { background:var(--ui-accent); color:var(--ui-text-primary); }
+.tb-root .tb-refresh { width:32px; height:32px; padding:0; color:var(--ui-text-secondary); }
+.tb-root .tb-empty { text-align:center; padding:20px 8px; color:var(--ui-text-secondary); }
+.tb-root .tb-alert { padding:10px 12px; border:1px solid var(--ui-stroke-secondary); border-radius:8px; overflow-wrap:anywhere; }
 `
 const taskBoardStyle = () => jsx('style', { children: taskBoardStyles })
 
@@ -105,6 +129,8 @@ function TasksPage() {
     catch (failure) { setError(failure.message || String(failure)) }
     finally { busyRef.current = false; setBusy(false) }
   }
+  const failures = [backendError(query.data, query.error), backendError(null, labelsQuery.error), error && new Error(error)].filter(Boolean)
+  const failure = failures.find(item => item.message === staleMessage) || failures[0]
   const update = (task, body) => rest('/tasks/' + task.id, { method: 'PATCH', body })
   const edit = (task) => {
     setEditing(task?.id || 'new')
@@ -125,12 +151,12 @@ function TasksPage() {
   const action = (label, onClick, extra = {}) => jsx(Button, { variant: 'ghost', size: 'sm', disabled: busy, onClick, children: label, ...extra })
   return jsxs(ScrollArea, { className: 'tb-root h-full', children: [taskBoardStyle(),
     jsxs('div', { className: 'tb-tasks', children: [
-      jsxs('div', { className: 'tb-toolbar', children: [jsx('span', { className: 'tb-title', children: '任务清单' }), action('新建任务', () => edit(null)), action('刷新', () => run(() => Promise.resolve()))] }),
-      jsxs('div', { className: 'tb-toolbar', role: 'tablist', 'aria-label': '任务状态', children: Object.entries({ all: '全部', ...taskStatus }).map(([value, label]) => action(label, () => setFilter(value), { role: 'tab', 'aria-selected': filter === value })) }),
-      jsx('input', { type: 'search', value: search, placeholder: '搜索任务', 'aria-label': '搜索任务', onChange: e => setSearch(e.target.value) }),
+      jsxs('div', { className: 'tb-toolbar', children: [jsx('span', { className: 'tb-title', children: '任务清单' }), action('新建任务', () => edit(null), { variant: 'default', className: 'tb-primary' }), action('↻', () => run(() => Promise.resolve()), { 'aria-label': '刷新', className: 'tb-refresh' })] }),
+      jsxs('div', { className: 'tb-tabs', role: 'tablist', 'aria-label': '任务状态', children: Object.entries({ all: '全部', ...taskStatus }).map(([value, label]) => action(label, () => setFilter(value), { role: 'tab', 'aria-selected': filter === value })) }),
+      jsxs('div', { className: 'tb-filters', children: [jsx('input', { type: 'search', value: search, placeholder: '搜索任务', 'aria-label': '搜索任务', onChange: e => setSearch(e.target.value) }),
       jsx('select', { value: labelFilter, 'aria-label': '标签筛选', onChange: e => setLabelFilter(e.target.value), children: [
-        jsx('option', { value: '', children: 'All labels' }), ...Object.keys(definitions).map(name => jsx('option', { value: name, children: name }, name))
-      ] }),
+        jsx('option', { value: '', children: '全部标签' }), ...Object.keys(definitions).map(name => jsx('option', { value: name, children: name }, name))
+      ] })] }),
       jsxs('details', { className: 'tb-label-manager', children: [jsx('summary', { children: '管理标签' }),
         ...Object.entries(definitions).map(([name, color]) => {
           const value = Object.hasOwn(labelEdits, name) ? labelEdits[name] : { name, color }
@@ -150,7 +176,7 @@ function TasksPage() {
         }) }, children: [jsx('input', { 'aria-label': '新标签名称', value: newLabel, required: true, maxLength: 40, onChange: e => setNewLabel(e.target.value) }),
           palette(newColor, setNewColor), jsx(Button, { type: 'submit', size: 'sm', disabled: busy, children: '添加标签' })] })
       ] }),
-      error || query.isError || labelsQuery.isError ? jsx('div', { role: 'alert', children: error || query.error?.message || labelsQuery.error?.message || '加载失败' }) : null,
+      error || failure || query.isError || labelsQuery.isError ? jsx('div', { className: 'tb-alert', role: 'alert', children: failure?.message || error || '加载失败' }) : null,
       editing ? jsxs('form', { className: 'tb-task-form', onSubmit: e => { e.preventDefault(); return run(async () => {
         await rest(editing === 'new' ? '/tasks' : '/tasks/' + editing, { method: editing === 'new' ? 'POST' : 'PATCH', body: draft }); setEditing(null)
       }) }, children: [
@@ -162,7 +188,7 @@ function TasksPage() {
         jsx(Button, { type: 'submit', size: 'sm', disabled: busy, children: '保存' }), action('取消', () => setEditing(null), { type: 'button' })
       ] }) : null,
       query.isLoading ? jsx('div', { children: '加载任务…' }) : !tasks.length ? jsx(EmptyState, { title: '暂无任务' }) : null,
-      jsx('div', { className: 'tb-task-columns', children: Object.entries(taskStatus).map(([status, label]) => jsxs('section', {
+      tasks.length ? jsx('div', { className: 'tb-task-columns', children: Object.entries(taskStatus).map(([status, label]) => jsxs('section', {
         className: cn('tb-task-zone', dropTarget === status && 'tb-drop-target'), 'aria-label': label,
         onDragOver: e => {
           if (!draggedTask.current || draggedTask.current.status === status || busyRef.current) return
@@ -176,6 +202,7 @@ function TasksPage() {
           if (task && task.status !== status) return run(() => update(task, { status }))
         },
         children: [jsx('div', { className: 'tb-section', children: label }),
+          !tasks.some(t => t.status === status) ? jsx('div', { className: 'tb-empty', children: '暂无任务' }) : null,
       ...[true, false].map(pinned => jsxs('div', { children: [
         tasks.some(t => t.status === status && t.pinned === pinned) ? jsx('div', { className: 'tb-section', children: pinned ? '置顶' : '任务' }) : null,
         ...tasks.filter(t => t.status === status && t.pinned === pinned).map(task => jsxs('div', {
@@ -205,7 +232,7 @@ function TasksPage() {
         ] }, task.id))
       ] }, String(pinned)))
         ]
-      }, status)) })
+      }, status)) }) : null
     ] })
   ] })
 }

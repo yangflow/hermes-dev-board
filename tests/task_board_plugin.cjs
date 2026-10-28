@@ -40,7 +40,7 @@ function harness() {
     return { type, props: props || {}, key }
   }
   const context = vm.createContext({
-    URL, host, jsx, jsxs: jsx, cn: (...args) => args.filter(Boolean).join(' '),
+    console: { error: (...args) => calls.push(['console.error', ...args]) }, URL, host, jsx, jsxs: jsx, cn: (...args) => args.filter(Boolean).join(' '),
     useState(initial) {
       const i = cursor++
       if (!slots[i]) slots[i] = { value: typeof initial === 'function' ? initial() : initial }
@@ -76,7 +76,7 @@ function harness() {
     unload() { cleanups.forEach((fn) => fn()) },
     rest: async (url, options) => {
       calls.push(['rest', url, options])
-      return { ok: true }
+      return url === '/tasks' && !options ? { api_version: 1, tasks: [] } : { ok: true }
     },
     render(fn, props) {
       let node, rounds = 0
@@ -115,7 +115,7 @@ const todoTask = { id: '10', title: 'Ship feature', ref: 'GH-1234', note: 'remem
 function tasksHarness(tasks = [todoTask]) {
   const h = harness()
   h.results['task-board-labels'] = { data: { labels: {} }, refetch: async () => {} }
-  h.results['task-board-tasks'] = { data: { tasks }, refetch: async () => {} }
+  h.results['task-board-tasks'] = { data: { api_version: 1, tasks }, refetch: async () => {} }
   h.renderTasks = () => h.render(h.api.TasksPage)
   return h
 }
@@ -316,7 +316,7 @@ test('colored labels roundtrip in task form and combine with status and search',
   ])
   h.results['task-board-labels'].data.labels = { bug: 'red', docs: 'blue' }
   const row = panel => nodes(panel).filter(n => /(?:^| )tb-task-row(?: |$)/.test(n.props.className || ''))
-  assert.equal(nodes(row(h.renderTasks())[0]).find(n => n.props.className === 'tb-label').props.style.backgroundColor, '#f87171')
+  assert.equal(nodes(row(h.renderTasks())[0]).find(n => n.props.className === 'tb-label-dot').props.style.backgroundColor, '#f87171')
   nodes(h.renderTasks()).find(n => n.props['aria-label'] === '标签筛选').props.onChange({ target: { value: 'bug' } })
   assert.equal(row(h.renderTasks()).length, 2)
   nodes(h.renderTasks()).find(n => n.props.role === 'tab' && text(n) === '待办').props.onClick()
@@ -364,4 +364,45 @@ test('label manager supports names that collide with Object prototype keys', asy
     await form().props.onSubmit({ preventDefault() {} })
     assert.deepEqual(plain(h.calls.at(-1)[2].body), { name, new_name: 'renamed', color: 'blue' })
   }
+})
+
+test('labels 404 shows actionable stale banner without raw JSON and keeps console error', async () => {
+  const h = tasksHarness()
+  h.renderTasks()
+  const raw = '404: {"detail":"Not Found"}'
+  h.rest = async () => { throw new Error(raw) }
+  let failure
+  try { await h.queries.find(q => q.queryKey[0] === 'task-board-labels').queryFn() } catch (error) { failure = error }
+  h.results['task-board-tasks'].error = new Error('500: unavailable')
+  h.results['task-board-labels'] = { isError: true, error: failure }
+  const panel = h.renderTasks()
+  assert.equal(text(nodes(panel).find(n => n.props.role === 'alert')), '后端为旧版本：需重启/重载网关后生效')
+  assert.doesNotMatch(text(panel), /404|Not Found|detail/)
+  assert.equal(h.calls.find(c => c[0] === 'console.error')[3].message, raw)
+})
+
+test('tasks API version mismatch or absent version shows stale banner; matching version stays normal', async () => {
+  for (const version of [undefined, 0, 2]) {
+    const h = tasksHarness()
+    h.rest = async () => ({ api_version: version, tasks: [] })
+    h.renderTasks()
+    await assert.rejects(h.queries.find(q => q.queryKey[0] === 'task-board-tasks').queryFn(), /后端为旧版本/)
+    h.results['task-board-tasks'].data.api_version = version
+    assert.match(text(nodes(h.renderTasks()).find(n => n.props.role === 'alert')), /需重启\/重载网关后生效/)
+  }
+  assert.equal(nodes(tasksHarness().renderTasks()).some(n => n.props.role === 'alert'), false)
+})
+
+test('mutation 404 uses shared stale notice and empty board replaces all columns', async () => {
+  const h = tasksHarness()
+  h.rest = async () => { throw Object.assign(new Error('Not Found'), { status: 404 }) }
+  await button(h.renderTasks(), '删除')()
+  assert.match(text(nodes(h.renderTasks()).find(n => n.props.role === 'alert')), /后端为旧版本/)
+  const empty = tasksHarness([]).renderTasks()
+  assert.equal(nodes(empty).filter(n => n.type === 'EmptyState').length, 1)
+  assert.equal(nodes(empty).filter(n => n.type === 'section').length, 0)
+  const panel = tasksHarness().renderTasks()
+  assert.equal(nodes(panel).filter(n => n.type === 'section').length, 3)
+  assert.equal(nodes(panel).find(n => n.props['aria-label'] === '刷新').props.children, '↻')
+  assert.match(text(panel), /全部标签/)
 })
