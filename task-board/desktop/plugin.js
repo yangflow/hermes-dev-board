@@ -119,6 +119,25 @@ const taskBoardStyles = `.tb-root { --tb-space:calc(.25rem * var(--spacing-mul, 
 .tb-root .tb-palette button { width:24px; height:24px; padding:calc(var(--tb-space) * .5); border:2px solid transparent; border-radius:50%; background:transparent; }
 .tb-root .tb-palette button[aria-pressed="true"] { border-color:var(--ui-text-primary); }
 .tb-root .tb-palette span { display:block; width:100%; height:100%; border-radius:50%; }
+.tb-root .tb-status-manager { display:flex; flex-direction:column; gap:calc(var(--tb-space) * 3); max-height:60vh; overflow-y:auto; padding:var(--tb-space); }
+.tb-root .tb-status-card { min-width:0; padding:calc(var(--tb-space) * 3); border:1px solid var(--ui-stroke-secondary); border-radius:var(--radius-md); background:var(--ui-bg-editor); }
+.tb-root .tb-status-main, .tb-root .tb-status-fields, .tb-root .tb-status-actions { display:flex; align-items:center; gap:calc(var(--tb-space) * 2); min-width:0; }
+.tb-root .tb-status-fields { flex:1; }
+.tb-root .tb-status-fields input { flex:1; width:0; }
+.tb-root .tb-status-fields select { flex:0 1 100px; }
+.tb-root .tb-status-actions { margin-left:auto; gap:0; }
+.tb-root .tb-status-icon { display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; width:28px; height:32px; padding:0; color:var(--ui-text-secondary); }
+.tb-root .tb-status-dot { width:12px; height:12px; border-radius:50%; }
+.tb-root .tb-status-confirm { display:flex; align-items:center; flex-wrap:wrap; gap:calc(var(--tb-space) * 2); margin-top:calc(var(--tb-space) * 3); padding-top:calc(var(--tb-space) * 3); border-top:1px solid var(--ui-stroke-secondary); }
+.tb-root .tb-status-confirm select, .tb-root .tb-status-confirm > span { flex:1 1 140px; }
+.tb-root .tb-status-footer { display:flex; flex-direction:column; gap:calc(var(--tb-space) * 3); }
+.tb-root .tb-status-add { width:100%; border:1px dashed var(--ui-stroke-secondary); }
+.tb-root .tb-status-save { align-self:flex-end; }
+@media (max-width:480px) {
+  .tb-root .tb-status-main { flex-wrap:wrap; }
+  .tb-root .tb-status-fields { flex-basis:calc(100% - 40px); flex-wrap:wrap; }
+  .tb-root .tb-status-fields input, .tb-root .tb-status-fields select { flex:1 1 100%; width:100%; }
+}
 @container (max-width:760px) {
   .tb-root .tb-tasks { padding:calc(var(--tb-space) * 4); gap:calc(var(--tb-space) * 4); }
   .tb-root .tb-task-columns { grid-template-columns:1fr; }
@@ -183,6 +202,7 @@ function TasksPage() {
   const [statusesOpen, setStatusesOpen] = useState(false)
   const [statusDraft, setStatusDraft] = useState([])
   const [migrations, setMigrations] = useState({})
+  const [pendingDeletes, setPendingDeletes] = useState(new Set())
   const [syncActive, setSyncActive] = useState(false)
   const syncQuery = useQuery({ queryKey: ['task-board-sync'], queryFn: async () => {
     const state = await rest('/sync')
@@ -333,32 +353,41 @@ function TasksPage() {
       ] }), action('完成', () => setLabelsOpen(false), { variant: 'outline' })
       ] }) : null] }),
       jsxs('div', { className: 'tb-view-toggle', role: 'radiogroup', 'aria-label': '任务视图', children: [['board', '▦ 看板'], ['list', '☰ 列表']].map(([value, label]) => action(label, () => { setView(value); taskStorage.set('view', value) }, { role: 'radio', 'aria-checked': view === value, onKeyDown: e => { if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) { e.preventDefault(); const next = view === 'board' ? 'list' : 'board'; setView(next); taskStorage.set('view', next); e.currentTarget.parentElement.querySelectorAll('[role="radio"]')[next === 'board' ? 0 : 1].focus() } } })) }),
-      action('管理状态', () => { setStatusDraft(statuses.map(s => ({ ...s }))); setMigrations({}); setStatusesOpen(true) }),
+      action('管理状态', () => { setStatusDraft(statuses.map(s => ({ ...s }))); setMigrations({}); setPendingDeletes(new Set()); setStatusesOpen(true) }),
       syncQuery.data?.available ? action(syncRunning ? '同步中…' : '立即同步', () => run(async () => { const state = await rest('/sync', { method: 'POST' }); setSyncActive(!!state.running); if (state.running) wasSyncing.current = true; await syncQuery.refetch() }), { disabled: busy || syncRunning, children: syncRunning ? jsxs('span', { role: 'status', children: [jsx(Codicon, { name: 'loading', className: 'animate-spin', 'aria-hidden': true }), ' 同步中…'] }) : '立即同步' }) : null,
       action('↻', () => run(() => syncQuery.refetch?.()), { 'aria-label': '刷新', className: 'tb-refresh' })] }),
       syncQuery.error || syncQuery.data?.last_result?.ok === false ? jsx('div', { role: 'alert', className: 'tb-alert', children: syncQuery.error?.message || syncQuery.data.last_result.message }) : null,
       jsx(Dialog, { open: statusesOpen, onOpenChange: setStatusesOpen, children: statusesOpen ? jsxs(DialogContent, { className: 'tb-root tb-dialog', banner: failure?.message, children: [
-        jsxs(DialogHeader, { children: [jsx(DialogTitle, { children: '管理状态' }), jsx(DialogDescription, { children: '按顺序推进任务；每种类别至少保留一个状态。删除在用状态时请选择迁移目标。' })] }),
-        jsx('div', { className: 'tb-label-manager', style: { maxHeight: '60vh', overflowY: 'auto' }, children: statusDraft.map((status, index) => {
+        jsxs(DialogHeader, { children: [jsx(DialogTitle, { children: '管理状态' }), jsx(DialogDescription, { children: '调整名称、颜色和顺序，每类至少保留一个状态。' })] }),
+        jsx('div', { className: 'tb-status-manager', children: statusDraft.map((status, index) => {
           const patch = fields => setStatusDraft(statusDraft.map(s => s.id === status.id ? { ...s, ...fields } : s))
           const move = delta => { const next = [...statusDraft]; [next[index], next[index + delta]] = [next[index + delta], next[index]]; setStatusDraft(next) }
           const used = (query.data?.tasks || []).some(t => t.status === status.id)
-          return jsxs('div', { role: 'group', 'aria-label': '状态 ' + status.name, children: [
-            jsx('input', { 'aria-label': '状态名称 ' + status.id, maxLength: 40, value: status.name, onChange: e => patch({ name: e.target.value }) }),
-            palette(status.color, color => patch({ color })),
-            jsx('select', { 'aria-label': '状态类别 ' + status.id, value: status.category, onChange: e => patch({ category: e.target.value }), children: [['todo', '待办类'], ['doing', '进行类'], ['done', '完成类']].map(([value, name]) => jsx('option', { value, children: name }, value)) }),
-            action('上移', () => move(-1), { disabled: busy || index === 0, 'aria-label': '上移 ' + status.name }),
-            action('下移', () => move(1), { disabled: busy || index === statusDraft.length - 1, 'aria-label': '下移 ' + status.name }),
-            used ? jsx('select', { 'aria-label': '迁移目标 ' + status.id, value: migrations[status.id] || '', onChange: e => setMigrations({ ...migrations, [status.id]: e.target.value }), children: [jsx('option', { value: '', children: '选择迁移目标' }), ...statusDraft.filter(s => s.id !== status.id).map(s => jsx('option', { value: s.id, children: s.name }, s.id))] }) : null,
-            action('删除状态', () => setStatusDraft(statusDraft.filter(s => s.id !== status.id)), { 'aria-label': '删除状态 ' + status.name, disabled: busy || used && !migrations[status.id] || Object.entries(migrations).some(([id, target]) => target === status.id && !statusDraft.some(s => s.id === id)) })
+          const protectedTarget = Object.entries(migrations).some(([id, target]) => target === status.id && !statusDraft.some(s => s.id === id))
+          const clearPending = () => setPendingDeletes(current => { const next = new Set(current); next.delete(status.id); return next })
+          return jsxs('div', { className: 'tb-status-card', role: 'group', 'aria-label': '状态 ' + status.name, children: [
+            jsxs('div', { className: 'tb-status-main', children: [
+              jsxs(DropdownMenu, { children: [jsx(DropdownMenuTrigger, { asChild: true, children: action('状态颜色 ' + status.id, undefined, { className: 'tb-status-icon', children: jsx('span', { className: 'tb-status-dot', 'aria-hidden': true, style: { backgroundColor: labelPalette[status.color] || labelPalette.gray } }) }) }),
+                jsx(DropdownMenuContent, { className: 'tb-root tb-menu', align: 'start', children: Object.keys(labelPalette).map(color => jsx(DropdownMenuItem, { disabled: busy, onSelect: () => patch({ color }), 'aria-label': color, children: labelChip(color, color), 'aria-current': status.color === color ? 'true' : undefined }, color)) })] }),
+              jsxs('div', { className: 'tb-status-fields', children: [
+                jsx('input', { 'aria-label': '状态名称 ' + status.id, maxLength: 40, value: status.name, onChange: e => patch({ name: e.target.value }) }),
+                jsx('select', { 'aria-label': '状态类别 ' + status.id, value: status.category, onChange: e => patch({ category: e.target.value }), children: [['todo', '待办类'], ['doing', '进行类'], ['done', '完成类']].map(([value, name]) => jsx('option', { value, children: name }, value)) })] }),
+              jsxs('div', { className: 'tb-status-actions', children: [
+                action('上移', () => move(-1), { className: 'tb-status-icon', disabled: busy || index === 0, 'aria-label': '上移 ' + status.name, children: jsx(Codicon, { name: 'chevron-up', 'aria-hidden': true }) }),
+                action('下移', () => move(1), { className: 'tb-status-icon', disabled: busy || index === statusDraft.length - 1, 'aria-label': '下移 ' + status.name, children: jsx(Codicon, { name: 'chevron-down', 'aria-hidden': true }) }),
+                action('删除状态', () => setPendingDeletes(current => new Set([...current, status.id])), { className: 'tb-status-icon', 'aria-label': '删除状态 ' + status.name, 'aria-expanded': pendingDeletes.has(status.id), disabled: busy || protectedTarget, children: jsx(Codicon, { name: 'trash', 'aria-hidden': true }) })] })] }),
+            pendingDeletes.has(status.id) ? jsxs('div', { className: 'tb-status-confirm', role: 'group', 'aria-label': '确认删除 ' + status.name, children: [
+              used ? jsx('select', { 'aria-label': '迁移目标 ' + status.id, value: migrations[status.id] || '', onChange: e => setMigrations({ ...migrations, [status.id]: e.target.value }), children: [jsx('option', { value: '', children: '选择迁移目标' }), ...statusDraft.filter(s => s.id !== status.id).map(s => jsx('option', { value: s.id, children: s.name }, s.id))] }) : jsx('span', { children: '删除此状态？' }),
+              action('确认删除', () => { setStatusDraft(statusDraft.filter(s => s.id !== status.id)); clearPending() }, { disabled: busy || used && !migrations[status.id] || protectedTarget }),
+              action('取消', () => { clearPending(); setMigrations(current => { const next = { ...current }; delete next[status.id]; return next }) })] }) : null
           ] }, status.id)
         }) }),
-        action('添加状态', () => setStatusDraft([...statusDraft, { id: 'status-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7), name: '新状态', color: 'blue', category: 'doing' }])),
+        jsxs('div', { className: 'tb-status-footer', children: [action('添加状态', () => setStatusDraft([...statusDraft, { id: 'status-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7), name: '新状态', color: 'blue', category: 'doing' }]), { className: 'tb-status-add' }),
         action('保存状态', () => run(async () => {
           const surviving = new Set(statusDraft.map(s => s.id))
           await rest('/statuses', { method: 'PUT', body: { statuses: statusDraft, migrations: Object.fromEntries(Object.entries(migrations).filter(([id]) => !surviving.has(id))) } })
           setFilter(''); setStatusesOpen(false)
-        }), { variant: 'default' })
+        }), { variant: 'default', className: 'tb-status-save' })] })
       ] }) : null }),
       jsxs('div', { className: 'tb-stats', 'aria-label': '任务统计', children: [jsx('span', { children: tasks.length + ' 个任务' }), ...statuses.map(s => [s.id, s.name]).map(([status, label]) => jsx('span', { children: allTasks.filter(task => task.status === status).length + ' ' + label }, status))] }),
       view === 'list' ? jsxs('div', { className: 'tb-tabs', role: 'tablist', 'aria-label': '任务状态', children: [['', '全部'], ...statuses.map(s => [s.id, s.name])].map(([value, label]) => action(label, () => setFilter(value), { role: 'tab', 'aria-selected': filter === value })) }) : null,
