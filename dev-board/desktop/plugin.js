@@ -65,26 +65,6 @@ const boardStyles = `
 .dev-board.db-dock .db-review-action { width:26px; height:26px; padding:0; }
 .dev-board.db-dock .db-clean { padding:4px 0; color:var(--ui-text-tertiary); }
 
-.dev-board .db-board-content { display:flex; flex-direction:column; gap:24px; padding:12px; min-width:0; }
-.dev-board .db-board-toolbar { color:var(--ui-text-secondary); }
-.dev-board .db-board-count { flex:1; min-width:0; }
-.dev-board .db-card { background:color-mix(in srgb, var(--ui-text-primary) 5%, transparent); }
-.dev-board .db-card-active { border-color:var(--ui-accent); }
-.dev-board .db-card-head { display:flex; align-items:center; gap:8px; border-bottom:1px solid var(--ui-stroke-secondary); }
-.dev-board .db-card-head .db-title { flex:1 1 0; }
-.dev-board .db-card-head > :not(.db-title) { flex-shrink:0; }
-.dev-board .db-card-head > .db-task-actions { flex-shrink:1; min-width:0; }
-.dev-board .db-task-actions { display:flex; align-items:center; gap:6px; }
-.dev-board .db-task-actions > button { height:28px; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.dev-board .db-repos { padding:12px; gap:10px; }
-.dev-board .db-repo { padding:12px; border:0; background:color-mix(in srgb, var(--ui-text-primary) 2%, transparent); }
-.dev-board .db-repo-head { width:auto; flex:1 1 0; padding:0; }
-.dev-board .db-repo-head > :not(.db-repo-name) { flex-shrink:0; }
-.dev-board .db-repo-meta { display:flex; gap:10px; margin:4px 0; }
-.dev-board .db-branch { max-width:45%; font-family:monospace; }
-.dev-board .db-branch, .dev-board .db-commit { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.dev-board .db-hash { font-family:monospace; }
-.dev-board .db-repo .db-review { border:0; padding:0; margin:0; }
 .dev-board .db-review-head { flex-wrap:nowrap; gap:6px; }
 .dev-board .db-review-head > .db-review-summary { flex:0 1 auto; min-width:0; font-size:11px; color:var(--ui-text-secondary); }
 .dev-board .db-review-action { flex-shrink:0; width:28px; height:28px; padding:0; }
@@ -95,17 +75,62 @@ const boardStyles = `
 .dev-board .db-review-target, .dev-board .db-review-draft { color:var(--ui-text-secondary); }
 .dev-board .db-review-merged { color:var(--ui-green); background:color-mix(in srgb, var(--ui-green) 12%, transparent); }
 .dev-board .db-review-open { color:var(--ui-accent); background:color-mix(in srgb, var(--ui-accent) 12%, transparent); }
-@media (max-width:480px) {
-  .dev-board .db-board-content { padding:8px; gap:20px; }
-  .dev-board .db-card-head { gap:4px; padding:12px 8px; }
-  .dev-board .db-task-actions { gap:2px; flex-shrink:1; min-width:0; }
-  .dev-board .db-task-actions > button { padding-inline:4px; font-size:11px; }
-  .dev-board .db-repos { padding:8px; }
-  .dev-board .db-repo { padding:12px; }
-  .dev-board .db-repo .db-review-head { flex-wrap:wrap; }
-  .dev-board .db-repo-head { flex-basis:calc(100% - 72px); }
-  .dev-board .db-repo .db-review-summary { order:1; flex-basis:100%; }
+.dev-board.db-page { container-type:inline-size; }
+.dev-board.db-page .db-board-content { display:flex; flex-direction:column; gap:16px; padding:28px; min-width:0; max-width:1440px; margin:auto; }
+.dev-board.db-page .db-page-header { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.dev-board.db-page .db-eyebrow { color:var(--ui-text-tertiary); letter-spacing:.14em; font-size:10px; font-weight:600; }
+.dev-board.db-page .db-page-header h1 { margin:8px 0; font-size:26px; font-weight:650; }
+.dev-board.db-page .db-page-header p { margin:0; color:var(--ui-text-secondary); }
+.dev-board.db-page .db-board-toolbar { padding:12px 0; border-bottom:1px solid var(--ui-stroke-secondary); }
+.dev-board.db-page .db-search { flex:1 1 220px; }
+.dev-board.db-page select { font:inherit; max-width:100%; padding:6px; border:1px solid var(--ui-stroke-secondary); border-radius:4px; background:transparent; color:var(--ui-text-primary); }
+.dev-board.db-page select:focus-visible { outline:2px solid var(--ui-accent); }
+.dev-board.db-page .db-board-count { color:var(--ui-text-secondary); }
+.dev-board.db-page .db-board-count b { color:var(--ui-text-primary); }
+.dev-board.db-page .db-board-count .db-accent { color:var(--ui-accent); }
+.dev-board.db-page .db-card { background:transparent; }
+.dev-board.db-page .db-card-active { border-color:var(--ui-accent); }
+.dev-board.db-page .db-card-head { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:18px; }
+.dev-board.db-page .db-task-toggle { display:flex; align-items:center; gap:10px; flex:1 1 240px; min-width:0; padding:0; text-align:left; border:0; background:transparent; color:inherit; }
+.dev-board.db-page .db-task-heading { display:flex; flex-direction:column; gap:6px; min-width:0; }
+.dev-board.db-page .db-title { display:block; }
+.dev-board.db-page .db-ref { display:inline-block; padding:2px 5px; border:1px solid var(--ui-stroke-secondary); border-radius:4px; font:11px monospace; color:var(--ui-text-secondary); }
+.dev-board.db-page .db-progress { display:block; width:100px; height:3px; background:var(--ui-stroke-secondary); border-radius:3px; overflow:hidden; }
+.dev-board.db-page .db-progress > span { display:block; height:100%; background:var(--ui-accent); }
+.dev-board.db-page .db-task-actions { display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
+.dev-board.db-page .db-task-actions > button:first-child { color:var(--ui-accent); }
+.dev-board.db-page .db-pill { display:inline-block; border-radius:12px; padding:3px 7px; margin:2px 0; font-size:11px; white-space:nowrap; color:var(--ui-text-tertiary); background:color-mix(in srgb,var(--ui-text-tertiary) 10%,transparent); }
+.dev-board.db-page .db-pill-good { color:var(--ui-green); background:color-mix(in srgb,var(--ui-green) 10%,transparent); }
+.dev-board.db-page .db-pill-warn, .dev-board.db-page .db-dirty { color:var(--ui-warning, var(--ui-accent)); }
+.dev-board.db-page .db-pill-warn { background:color-mix(in srgb,var(--ui-accent) 10%,transparent); }
+.dev-board.db-page .db-repo-table { width:100%; table-layout:fixed; border-collapse:collapse; font-size:12px; }
+.dev-board.db-page .db-repo-table th { color:var(--ui-text-tertiary); font-weight:500; text-align:left; }
+.dev-board.db-page .db-repo-table th, .dev-board.db-page .db-repo-table td { padding:12px 10px; border-top:1px solid var(--ui-stroke-secondary); vertical-align:middle; overflow-wrap:anywhere; }
+.dev-board.db-page .db-repo-table th:nth-child(1) { width:19%; }
+.dev-board.db-page .db-repo-table th:nth-child(2) { width:43%; }
+.dev-board.db-page .db-repo-table th:nth-child(3) { width:12%; }
+.dev-board.db-page .db-repo-table th:nth-child(4) { width:12%; }
+.dev-board.db-page .db-repo-table th:nth-child(5) { width:10%; }
+.dev-board.db-page .db-repo-table th:nth-child(6) { width:4%; }
+.dev-board.db-page .db-repo-name, .dev-board.db-page .db-branch, .dev-board.db-page .db-commit { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.dev-board.db-page .db-branch, .dev-board.db-page .db-hash, .dev-board.db-page .db-target { font-family:monospace; }
+.dev-board.db-page .db-commit { margin-top:5px; color:var(--ui-text-secondary); }
+.dev-board.db-page .db-dirty { display:block; margin-top:5px; font-size:11px; }
+.dev-board.db-page .db-table-link, .dev-board.db-page .db-row-action { border:0; background:transparent; color:var(--ui-accent); padding:4px 0; }
+.dev-board.db-page .db-row-action { width:100%; color:var(--ui-text-secondary); }
+.dev-board.db-page .db-detail-row .db-review { border:0; margin:0; padding:4px; }
+@container (max-width:650px) {
+  .dev-board.db-page .db-board-content { padding:12px; }
+  .dev-board.db-page .db-page-header { align-items:flex-start; flex-wrap:wrap; }
+  .dev-board.db-page .db-card-head { padding:12px; }
+  .dev-board.db-page .db-repo-table, .dev-board.db-page .db-repo-table tbody, .dev-board.db-page .db-repo-table tr, .dev-board.db-page .db-repo-table td { display:block; width:100%; }
+  .dev-board.db-page .db-repo-table thead { display:none; }
+  .dev-board.db-page .db-repo-table tbody { border-top:1px solid var(--ui-stroke-secondary); padding:8px 12px; }
+  .dev-board.db-page .db-repo-table td { border:0; padding:5px 0; }
+  .dev-board.db-page .db-repo-table td[data-label]::before { content:attr(data-label); display:block; font-size:10px; color:var(--ui-text-tertiary); margin-bottom:3px; }
+  .dev-board.db-page .db-row-action { text-align:left; }
 }
+
 
 `
 const boardStyle = () => jsx('style', { children: boardStyles })
@@ -584,23 +609,48 @@ function SessionChip({ s }) {
   })
 }
 
-function TaskCard({ task, activeZt, onPickRepo, pickedDir, editorName = 'VS Code' }) {
+function BoardReviewObserver({ repo, onData }) {
+  const query = useReviews(repo.dir, repo.branch)
+  useEffect(() => { onData(repo.dir, repo.branch, query.data, query.isError) }, [repo.dir, repo.branch, query.data, query.isError, onData])
+  return null
+}
+
+function taskReviewSummary(task, reviewData = {}) {
+  const entries = task.repos.map(r => reviewData[r.dir]?.branch === r.branch ? reviewData[r.dir] : null)
+  const reviews = entries.flatMap(e => e?.data?.reviews || [])
+  const known = entries.length > 0 && entries.every(e => e && !e.error && ['ok', 'empty'].includes(e.data?.status))
+  const merged = reviews.filter(r => r.state === 'merged').length
+  const failed = entries.some(e => e?.error || ['error', 'timeout', 'partial'].includes(e?.data?.status))
+  const open = reviews.some(r => ['open', 'opened', 'failed'].includes(r.state))
+  return { known, reviews, merged, pending: reviews.length - merged,
+    done: known && reviews.length > 0 && merged === reviews.length,
+    needs: open || failed,
+    waiting: reviews.some(r => r.state !== 'merged') || failed || (!known && task.repos.some(r => r.dirty > 0)) }
+}
+
+function TaskCard({ task, activeZt, editorName = 'VS Code', expanded = true, onToggle, reviewData = {} }) {
   const sessions = useSessions()
   const chips = (sessions.data?.zt_sessions || {})[task.id] || []
   const profile = host.state.focusedSessionProfile?.get() || host.state.profile?.get() || 'default'
-  const preferred = chips.find((s) => (s.profile || 'default') === profile) || chips[0]
+  const preferred = chips.find(s => (s.profile || 'default') === profile) || chips[0]
   const [choosing, setChoosing] = useState(false)
+  const [details, setDetails] = useState(() => new Set())
   const title = preferred?.title || taskPrefix(task.id, sessions.data?.zt_sessions)
-  const isActive = activeZt === task.id
-  return jsxs('div', {
-    className: cn('db-card', isActive && 'db-card-active'),
-    children: [
-      jsxs('div', { className: 'db-card-head', children: [
-        jsx('span', { className: 'db-title', title, children: title }),
-        jsx(Badge, { variant: 'secondary', children: task.repos.length + ' 仓' }),
-        isActive ? jsx(Badge, { variant: 'success', children: '当前会话' }) : null,
-        jsxs('div', { className: 'db-task-actions', children: [
-          preferred ? jsx(Button, { variant: 'default', size: 'sm', title: '打开会话', onClick: () => openTaskSession(preferred), children: '打开会话' }) : null,
+  const summary = taskReviewSummary(task, reviewData)
+  const pill = (label, tone = 'muted') => jsx('span', { className: 'db-pill db-pill-' + tone, children: label })
+  return jsxs('section', { className: cn('db-card', activeZt === task.id && 'db-card-active'), children: [
+    jsxs('div', { className: 'db-card-head', children: [
+      jsxs('button', { type: 'button', className: 'db-task-toggle', 'aria-expanded': expanded, onClick: onToggle, children: [
+        jsx('span', { 'aria-hidden': true, children: expanded ? '⌄' : '›' }),
+        jsxs('span', { className: 'db-task-heading', children: [
+          jsxs('span', { className: 'db-title', children: [jsx('span', { className: 'db-ref', children: taskPrefix(task.id, sessions.data?.zt_sessions) }), ' ', jsx('strong', { children: title })] }),
+          jsx('span', { className: 'db-meta', children: task.repos.length + ' 个仓库' + (summary.known ? ' · ' + summary.merged + '/' + summary.reviews.length + ' 已合并' : '') }),
+          summary.known && summary.reviews.length ? jsx('span', { className: 'db-progress', children: jsx('span', { style: { width: (summary.merged / summary.reviews.length * 100) + '%' } }) }) : null
+        ] })
+      ] }),
+      summary.needs ? pill('需要处理', 'warn') : summary.done ? pill('已全部合并', 'good') : summary.known ? pill(summary.pending + ' 个待合并', 'warn') : null,
+      jsxs('div', { className: 'db-task-actions', children: [
+        preferred ? jsx(Button, { variant: 'ghost', size: 'sm', title: '打开会话', onClick: () => openTaskSession(preferred), children: '▷ 打开会话' }) : null,
           chips.length > 1 ? jsx(Button, { variant: 'ghost', size: 'sm', title: '选择会话', onClick: () => setChoosing(!choosing), children: '选择会话' }) : null,
           choosing && chips.length > 1 ? jsx(Select, { value: '', onValueChange: (value) => {
             const s = chips.find((s) => JSON.stringify([s.profile || 'default', s.id]) === value)
@@ -609,59 +659,78 @@ function TaskCard({ task, activeZt, onPickRepo, pickedDir, editorName = 'VS Code
             jsx(SelectTrigger, { children: jsx(SelectValue, { placeholder: '选择会话' }) }),
             jsx(SelectContent, { children: chips.map((s) => jsx(SelectItem, { value: JSON.stringify([s.profile || 'default', s.id]), children: (s.profile || 'default') + ' · ' + s.title }, JSON.stringify([s.profile || 'default', s.id]))) })
           ] }) : null,
-          jsx(Button, {
-            variant: 'secondary', size: 'sm', title: '在 ' + editorName + ' 打开',
-            onClick: () => openEditor(task.id, editorName),
-            children: '在 ' + editorName + ' 打开'
-          })
-        ]})
-      ]}),
-      jsx('div', { className: 'db-repos', children: task.repos.map((r) => jsxs('div', {
-        className: 'db-repo',
-        style: pickedDir === r.dir ? { outline: '1px solid var(--ui-accent)' } : undefined,
-        children: [
-          jsx(ReviewLinks, { repo: r, showRepo: false, repoHeader: jsxs('button', { type: 'button', className: 'db-repo-head', onClick: () => onPickRepo(r), 'aria-pressed': pickedDir === r.dir, title: r.dir, children: [
-            jsx('span', { title: r.dirty > 0 ? '未提交 ' + r.dirty : '干净', children: jsx(StatusDot, { tone: r.dirty > 0 ? 'warn' : 'good' }) }),
-            jsx('span', { className: 'db-repo-name', children: r.repo }),
-            r.dirty > 0 ? jsx(Badge, { variant: 'warning', children: r.dirty + ' 未提交' }) : null
-          ]}),
-          metadata: jsxs('div', { className: 'db-repo-meta db-meta', children: [
-            jsx('span', { className: 'db-branch', title: r.branch || '(detached)', children: r.branch || '(detached)' }),
-            jsx('span', { className: 'db-commit', title: r.last || '—', children: [
-              jsx('span', { className: 'db-hash', children: (r.last || '—').split(' ')[0] }),
-              ' ' + (r.last || '').split(' ').slice(1).join(' ')
-            ] })
-          ] }) })
-        ]
-      }, r.dir)) })
-    ]
-  })
+
+        jsx(Button, { variant: 'ghost', size: 'sm', title: '在 ' + editorName + ' 打开', onClick: () => openEditor(task.id, editorName), children: '在 ' + editorName + ' 打开 ↗' })
+      ] })
+    ] }),
+    expanded ? jsxs('table', { className: 'db-repo-table', children: [
+      jsx('thead', { children: jsx('tr', { children: ['仓库', '分支 + 最新提交', '合并请求', '目标分支', '状态', ''].map(label => jsx('th', { scope: 'col', children: label }, label)) }) }),
+      ...task.repos.map(r => {
+        const entry = reviewData[r.dir]
+        const data = entry?.branch === r.branch ? entry.data : null
+        const reviews = data?.reviews || []
+        const show = details.has(r.dir)
+        return jsxs('tbody', { children: [
+          jsxs('tr', { children: [
+            jsxs('td', { 'data-label': '仓库', children: [jsx('strong', { className: 'db-repo-name', title: r.dir, children: r.repo }), r.dirty > 0 ? jsx('span', { className: 'db-dirty', children: '● ' + r.dirty + ' 未提交' }) : null] }),
+            jsxs('td', { 'data-label': '分支 + 最新提交', children: [jsx('div', { className: 'db-branch', title: r.branch || '(detached)', children: r.branch || '(detached)' }), jsxs('div', { className: 'db-commit', title: r.last || '—', children: [jsx('span', { className: 'db-hash', children: (r.last || '—').split(' ')[0] }), ' ' + (r.last || '').split(' ').slice(1).join(' ')] })] }),
+            jsx('td', { 'data-label': '合并请求', children: reviews.length ? reviews.map(v => jsx('button', { type: 'button', className: 'db-table-link', title: v.title, onClick: () => openReview(v.url), children: (v.provider === 'gitlab' ? '!' : '#') + v.number + ' ↗' }, v.url)) : '—' }),
+            jsx('td', { 'data-label': '目标分支', className: 'db-target', children: reviews.length ? [...new Set(reviews.map(v => v.target_branch))].map(v => jsx('div', { title: v, children: '↳ ' + v }, v)) : '—' }),
+            jsx('td', { 'data-label': '状态', children: reviews.length ? reviews.map(v => pill(v.state === 'merged' ? '✓ 已合并' : v.draft ? '草稿' : v.state === 'closed' ? '已关闭' : '待合并', v.state === 'merged' ? 'good' : v.draft || v.state === 'closed' ? 'muted' : 'warn')) : pill(entry?.error ? '查询失败' : !data ? '加载中' : ['ok', 'empty'].includes(data.status) ? '无关联审阅' : ['error', 'timeout', 'partial'].includes(data.status) ? '查询失败' : '未配置') }),
+            jsx('td', { children: jsx('button', { type: 'button', className: 'db-row-action', 'aria-label': r.repo + ' 审阅详情', 'aria-expanded': show, onClick: () => setDetails(prev => { const next = new Set(prev); next.has(r.dir) ? next.delete(r.dir) : next.add(r.dir); return next }), children: '⋯' }) })
+          ] }),
+          show ? jsx('tr', { className: 'db-detail-row', children: jsx('td', { colSpan: 6, children: jsx(ReviewLinks, { repo: r, showRepo: false }) }) }) : null
+        ] }, r.dir)
+      })
+    ] }) : null
+  ] })
 }
 
 function BoardPage() {
   const board = useBoard()
   const sessions = useActiveZt()
   const activeZt = sessions.active?.id
-  const [pickedDir, setPickedDir] = useState(null)
+  const [search, setSearch] = useState('')
+  const [status, setStatus] = useState('all')
+  const [collapsed, setCollapsed] = useState(null)
+  const [overrides, setOverrides] = useState({})
+  const [reviewData, setReviewData] = useState({})
+  const onData = useMemo(() => (dir, branch, data, error) => setReviewData(prev => ({ ...prev, [dir]: { branch, data, error } })), [])
   if (board.isLoading) return jsx(EmptyState, { title: '加载 worktree…' })
   if (board.isError) return jsx(EmptyState, { title: '后端不可用', description: board.error?.message })
   if (staleBackend(board.data)) return staleNotice()
   const tasks = board.data?.tasks || []
-  const sorted = activeZt ? [...tasks.filter((t) => t.id === activeZt), ...tasks.filter((t) => t.id !== activeZt)] : tasks
-  return jsxs(ScrollArea, { className: 'dev-board h-full', children: [
-    boardStyle(), jsxs('div', { className: 'db-board-content', children: [
+  const sorted = activeZt ? [...tasks.filter(t => t.id === activeZt), ...tasks.filter(t => t.id !== activeZt)] : tasks
+  const repos = [...new Map(tasks.flatMap(t => t.repos).map(r => [r.dir, r])).values()]
+  const summaries = tasks.map(t => taskReviewSummary(t, reviewData))
+  const known = summaries.length > 0 && summaries.every(s => s.known)
+  const visible = sorted.filter(t => {
+    const title = (sessions.data?.zt_sessions?.[t.id] || []).map(s => s.title + ' ' + s.label).join(' ')
+    const matches = (t.id + ' ' + title + ' ' + t.repos.map(r => r.repo).join(' ')).toLowerCase().includes(search.toLowerCase())
+    const summary = taskReviewSummary(t, reviewData)
+    return matches && (status === 'all' || (status === 'pending' ? summary.waiting : summary.done))
+  })
+  return jsxs(ScrollArea, { className: 'dev-board db-page h-full', children: [boardStyle(),
+    ...repos.map(repo => jsx(BoardReviewObserver, { repo, onData }, repo.dir)),
+    jsxs('div', { className: 'db-board-content', children: [
+      jsxs('header', { className: 'db-page-header', children: [
+        jsxs('div', { children: [jsx('div', { className: 'db-eyebrow', children: 'DEV BOARD' }), jsx('h1', { children: '跨仓任务工作区' }), jsx('p', { children: '集中查看任务、关联仓库与合并进度。' })] }),
+        jsx(Button, { variant: 'ghost', size: 'sm', onClick: () => openDock(sessions.data?.zt_sessions || {}), children: '在会话右侧打开' })
+      ] }),
       jsxs('div', { className: 'db-toolbar db-board-toolbar', children: [
-        jsx('span', { className: 'db-board-count', children: tasks.length + ' 个任务' + (activeZt ? ' · 当前 ' + taskPrefix(activeZt, sessions.data?.zt_sessions) : '') }),
-        jsx(Button, {
-          variant: 'secondary', size: 'sm',
-          onClick: () => openDock(sessions.data?.zt_sessions || {}),
-          children: '在会话右侧打开'
-        }),
-        jsx(Button, { variant: 'ghost', size: 'sm', className: 'db-review-action', 'aria-label': '刷新', title: '刷新', onClick: () => board.refetch(), children: '↻' })
-      ]}),
-      sorted.map((t) => jsx(TaskCard, { task: t, activeZt, pickedDir, editorName: board.data?.editor_name || 'VS Code', onPickRepo: (r) => setPickedDir(r.dir) }, t.id))
-    ]})
-  ]})
+        jsx('input', { type: 'search', className: 'db-search', 'aria-label': '搜索任务', placeholder: '搜索任务、编号或仓库…', value: search, onChange: e => setSearch(e.target.value) }),
+        jsx('select', { 'aria-label': '任务状态', value: status, onChange: e => setStatus(e.target.value), children: [['all', '全部状态'], ['pending', '待处理'], ['done', '已完成']].map(([value, label]) => jsx('option', { value, children: label }, value)) }),
+        jsx(Button, { variant: 'ghost', size: 'sm', 'aria-pressed': collapsed === true, onClick: () => { setCollapsed(collapsed !== true); setOverrides({}) }, children: collapsed === true ? '全部展开' : '全部折叠' }),
+        jsx(Button, { variant: 'ghost', size: 'sm', 'aria-label': '刷新', title: '刷新', onClick: () => board.refetch(), children: '↻' })
+      ] }),
+      jsxs('div', { className: 'db-board-count', children: [jsx('b', { children: tasks.length }), ' 个任务 · ', jsx('b', { children: new Set(repos.map(r => r.repo)).size }), ' 个关联仓库', known ? jsxs('span', { children: [' · ', jsx('b', { className: 'db-accent', children: summaries.reduce((n, s) => n + s.pending, 0) }), ' 个待合并'] }) : null] }),
+      ...visible.map(t => {
+        const expanded = overrides[t.id] ?? (collapsed === null ? t.id === sorted[0]?.id || t.id === activeZt : !collapsed)
+        return jsx(TaskCard, { task: t, activeZt, editorName: board.data?.editor_name || 'VS Code', reviewData, expanded, onToggle: () => setOverrides(prev => ({ ...prev, [t.id]: !expanded })) }, t.id)
+      }),
+      !visible.length ? jsx('p', { className: 'db-meta', children: '没有匹配的任务' }) : null
+    ] })
+  ] })
 }
 
 export default {

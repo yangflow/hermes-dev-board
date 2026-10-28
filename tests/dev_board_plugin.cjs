@@ -112,7 +112,7 @@ function text(node) {
   return node == null ? '' : String(node)
 }
 function button(node, label) {
-  const found = nodes(node).find((n) => n.type === 'Button' && text(n) === label)
+  const found = nodes(node).find((n) => n.type === 'Button' && text(n).replace(/^▷ /, '').replace(/ ↗$/, '') === label)
   assert.ok(found, 'button: ' + label)
   return found.props.onClick
 }
@@ -398,7 +398,8 @@ test('board repo rows and dock all/per-repo selection include code reviews witho
   const repos = [reviewRepo, { ...reviewRepo, repo: 'web', dir: '/worktrees/web-1234' }]
   const task = { id: '1234', repos }
   let card = h.render(h.api.TaskCard, { task, onPickRepo() {} })
-  assert.equal(nodes(card).filter((n) => n.type === h.api.ReviewLinks).length, 2)
+  assert.equal(nodes(card).filter((n) => n.type === h.api.ReviewLinks).length, 0)
+  assert.equal(nodes(card).filter(n => n.props.className === 'db-row-action').length, 2)
   const dock = harness()
   dock.results['dev-board'].data.tasks[0].repos = repos
   dock.results['dev-board-task-changes'].data.repos = repos
@@ -592,37 +593,69 @@ test('dev board exposes one sidebar entry and no task list route', () => {
 })
 
 
-test('board presentation keeps one task header, inset repo identity, metadata and accessible actions', () => {
+test('board header, stats, table, collapse and review details follow workspace structure', () => {
   const h = harness()
   const repo = { ...reviewRepo, dirty: 3, last: 'abc123 Full commit subject', branch: 'feature/long/branch/name' }
-  let picked
-  const card = h.render(h.api.TaskCard, { task: { id: '1234', repos: [repo] }, onPickRepo: r => { picked = r } })
-  const head = nodes(card).filter(n => n.props.className === 'db-card-head')
-  assert.equal(head.length, 1)
-  assert.ok(nodes(head[0]).some(n => n.props.className === 'db-title'))
-  assert.equal(nodes(head[0]).find(n => text(n) === '打开会话').props.variant, 'default')
-  assert.equal(nodes(head[0]).find(n => text(n) === '在 VS Code 打开').props.variant, 'secondary')
-  const review = nodes(card).find(n => n.type === h.api.ReviewLinks)
-  assert.equal(review.props.repoHeader.props.className, 'db-repo-head')
-  review.props.repoHeader.props.onClick()
-  assert.equal(picked, repo)
-  assert.ok(nodes(review.props.repoHeader).some(n => n.props.title === '未提交 3'))
-  assert.equal(nodes(review.props.metadata).find(n => n.props.className === 'db-branch').props.title, repo.branch)
-  assert.equal(nodes(review.props.metadata).find(n => n.props.className === 'db-hash').props.children, 'abc123')
-  h.results['dev-board-reviews'] = { data: reviewData }
-  const panel = h.render(h.api.ReviewLinks, review.props)
-  const reviewHead = nodes(panel).find(n => n.props.className === 'db-review-head')
-  assert.ok(nodes(reviewHead).some(n => n.props.className === 'db-repo-head'))
-  for (const label of ['刷新 api 审阅', '为 api 添加链接']) {
-    const action = nodes(reviewHead).find(n => n.props['aria-label'] === label)
-    assert.equal(action.props.title, label)
-    assert.equal(action.props.className, 'db-review-action')
-  }
-  const boardHarness = harness()
-  const board = boardHarness.render(boardHarness.api.BoardPage)
-  assert.equal(nodes(board).find(n => n.props['aria-label'] === '刷新').props.title, '刷新')
-  assert.ok(nodes(board).some(n => n.props.className === 'db-board-count'))
+  const task = { id: '1234', repos: [repo] }
+  const render = (expanded = true) => h.render(h.api.TaskCard, { task, expanded })
+  let card = render()
+  assert.equal(nodes(card).filter(n => n.type === 'table').length, 1)
+  assert.deepEqual(nodes(card).filter(n => n.type === 'th').map(text), ['仓库', '分支 + 最新提交', '合并请求', '目标分支', '状态', ''])
+  assert.match(text(card), /3 未提交/)
+  assert.equal(nodes(card).find(n => n.props.className === 'db-branch').props.title, repo.branch)
+  assert.equal(nodes(card).find(n => n.props.className === 'db-hash').props.children, 'abc123')
+  assert.equal(nodes(card).filter(n => n.type === h.api.ReviewLinks).length, 0)
+  nodes(card).find(n => n.props['aria-label'] === 'api 审阅详情').props.onClick()
+  card = render()
+  assert.equal(nodes(card).find(n => n.props['aria-label'] === 'api 审阅详情').props['aria-expanded'], true)
+  assert.equal(nodes(card).find(n => n.type === h.api.ReviewLinks).props.repo, repo)
+  card = render(false)
+  assert.equal(nodes(card).filter(n => n.type === 'table').length, 0)
+  assert.equal(nodes(card).find(n => n.props.className === 'db-task-toggle').props['aria-expanded'], false)
+  const bh = harness()
+  let board = bh.render(bh.api.BoardPage)
+  assert.match(text(board), /DEV BOARD.*跨仓任务工作区/)
+  assert.match(text(board), /2\s+个任务 ·\s+0\s+个关联仓库/)
+  assert.doesNotMatch(text(board), /个待合并/)
+  assert.deepEqual(nodes(board).filter(n => n.type === bh.api.TaskCard).map(n => n.props.expanded), [true, false])
+  button(board, '全部折叠')()
+  board = bh.render(bh.api.BoardPage)
+  assert.ok(nodes(board).filter(n => n.type === bh.api.TaskCard).every(n => !n.props.expanded))
+  nodes(board).find(n => n.props['aria-label'] === '搜索任务').props.onChange({ target: { value: '5678' } })
+  board = bh.render(bh.api.BoardPage)
+  assert.deepEqual(nodes(board).filter(n => n.type === bh.api.TaskCard).map(n => n.props.task.id), ['5678'])
 })
+
+test('review summaries drive merged, pending and draft table pills and status filters', () => {
+  const h = harness()
+  const task = { id: '1234', repos: [reviewRepo] }
+  const reviewData = { [reviewRepo.dir]: { branch: reviewRepo.branch, data: { status: 'ok', reviews: [{ ...reviewDataFixture(), state: 'merged' }] } } }
+  let card = h.render(h.api.TaskCard, { task, reviewData })
+  assert.match(text(card), /已全部合并/)
+  assert.match(text(card), /✓ 已合并/)
+  assert.match(text(card), /1\/1 已合并/)
+  reviewData[reviewRepo.dir].data.reviews[0].state = 'open'
+  reviewData[reviewRepo.dir].data.reviews[0].draft = true
+  card = h.render(h.api.TaskCard, { task, reviewData })
+  assert.match(text(card), /需要处理/)
+  assert.match(text(card), /草稿/)
+  const bh = harness()
+  bh.results['dev-board'].data.tasks[0].repos = [{ ...reviewRepo, dirty: 1 }]
+  let board = bh.render(bh.api.BoardPage)
+  nodes(board).find(n => n.type === 'select').props.onChange({ target: { value: 'pending' } })
+  board = bh.render(bh.api.BoardPage)
+  assert.deepEqual(nodes(board).filter(n => n.type === bh.api.TaskCard).map(n => n.props.task.id), ['1234'])
+  const observer = nodes(board).find(n => typeof n.type === 'function' && n.type.name === 'BoardReviewObserver')
+  observer.props.onData(reviewRepo.dir, reviewRepo.branch, { status: 'ok', reviews: [{ ...reviewDataFixture(), state: 'merged' }] }, false)
+  board = bh.render(bh.api.BoardPage)
+  assert.equal(nodes(board).filter(n => n.type === bh.api.TaskCard).length, 0)
+  nodes(board).find(n => n.type === 'select').props.onChange({ target: { value: 'done' } })
+  board = bh.render(bh.api.BoardPage)
+  assert.deepEqual(nodes(board).filter(n => n.type === bh.api.TaskCard).map(n => n.props.task.id), ['1234'])
+  nodes(board).find(n => n.props['aria-label'] === '搜索任务').props.onChange({ target: { value: 'api' } })
+  assert.equal(nodes(bh.render(bh.api.BoardPage)).filter(n => n.type === bh.api.TaskCard).length, 1)
+})
+function reviewDataFixture() { return { provider: 'gitlab', number: 747, title: 'Review', target_branch: 'v3.6.5', url: 'https://gitlab.com/a/b/-/merge_requests/747' } }
 
 test('review fields retain complete titles and distinguish open, merged and draft badges', () => {
   const h = harness()
@@ -640,6 +673,6 @@ test('review fields retain complete titles and distinguish open, merged and draf
   assert.equal(nodes(rows[0]).find(n => n.props.className === 'db-review-id').type, 'strong')
   assert.equal(nodes(rows[0]).find(n => n.props.className === 'db-review-target').props.children, '→ main')
   for (const [i, cls, label] of [[0, 'merged', '已合并'], [1, 'open', '待合并'], [2, 'draft', '草稿']]) {
-    assert.ok(nodes(rows[i]).some(n => n.props.className === 'db-review-badge db-review-' + cls && text(n) === label))
+    assert.ok(nodes(rows[i]).some(n => n.props.className === 'db-review-badge db-review-' + cls && text(n).replace(/^▷ /, '').replace(/ ↗$/, '') === label))
   }
 })
