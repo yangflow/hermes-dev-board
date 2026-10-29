@@ -33,6 +33,74 @@ class TasksTests(unittest.TestCase):
         self.assertEqual(result.status_code, 200, result.text)
         return result.json()
 
+    def test_legacy_first_binding_only(self):
+        task = self.create()
+        url = '/tasks/' + task['id']
+        link = {'session_id': 'stored', 'session_profile': 'dev', 'session_title': 'session'}
+        response = self.client.patch(url, json=link)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(all(response.json()[key] == value for key, value in link.items()))
+        for body in (link, {**link, 'session_id': 'other'}):
+            self.assertEqual(self.client.patch(url, json=body).status_code, 409)
+        for fields in ({'session_id': 'existing'}, {'session_profile': 'dev'}, {'session_title': 'existing'},
+                       *({'start_prompt_state': state} for state in ('pending', 'attempting', 'claimed', 'failed'))):
+            with self.subTest(fields=fields):
+                existing = self.create(**fields)
+                response = self.client.patch('/tasks/' + existing['id'], json=link)
+                self.assertEqual(response.status_code, 409)
+        for extra in ({'expected_start': None}, {'start_prompt_state': ''}, {'title': 'changed'}):
+            with self.subTest(extra=extra):
+                empty = self.create()
+                self.assertEqual(self.client.patch('/tasks/' + empty['id'], json={**link, **extra}).status_code, 409)
+        stored = self.client.get('/tasks').json()['tasks'][0]
+        self.assertTrue(all(stored[key] == value for key, value in link.items()))
+
+    def test_concurrent_legacy_bindings_only_one_succeeds(self):
+        import threading
+        task = self.create()
+        url = '/tasks/' + task['id']
+        barrier = threading.Barrier(2)
+        def bind(index):
+            with TestClient(self.client.app) as client:
+                barrier.wait()
+                link = {'session_id': str(index), 'session_profile': 'dev', 'session_title': 'session'}
+                return index, client.patch(url, json=link).status_code
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(bind, range(2)))
+        self.assertEqual(sorted(status for _, status in results), [200, 409])
+        winner = next(index for index, status in results if status == 200)
+        self.assertEqual(self.client.get('/tasks').json()['tasks'][0]['session_id'], str(winner))
+
+    def test_start_prompt_state_persists_and_validates(self):
+        task = self.create(session_id='stored', session_profile='dev', start_prompt_state='pending')
+        url = '/tasks/' + task['id']
+        claim = {'session_id': 'stored', 'session_profile': 'dev'}
+        self.assertEqual(self.client.post(url + '/start-prompt/claim', json=claim).status_code, 200)
+        expected = {**claim, 'start_prompt_state': 'attempting'}
+        response = self.client.patch(url, json={'expected_start': expected, 'start_prompt_state': 'claimed'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['start_prompt_state'], 'claimed')
+        for state in ('sent', None, True, []):
+            self.assertEqual(self.client.patch('/tasks/' + task['id'], json={'start_prompt_state': state}).status_code, 400)
+
+    def test_two_clients_atomically_claim_and_stale_writes_fail(self):
+        import threading
+        task = self.create(session_id='stored', session_profile='dev', start_prompt_state='pending')
+        url = '/tasks/' + task['id']
+        link = {'session_id': 'stored', 'session_profile': 'dev'}
+        app = self.client.app
+        barrier = threading.Barrier(2)
+        def claim():
+            with TestClient(app) as client:
+                barrier.wait()
+                return client.post(url + '/start-prompt/claim', json=link).status_code
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            self.assertEqual(sorted(pool.map(lambda _: claim(), range(2))), [200, 409])
+        for body in ({'start_prompt_state': 'pending'}, {'session_id': '', 'session_profile': '', 'start_prompt_state': ''}):
+            self.assertEqual(self.client.patch(url, json={**body, 'expected_start': {**link, 'start_prompt_state': 'pending'}}).status_code, 409)
+        for mismatch in ({**link, 'session_id': 'wrong'}, {**link, 'session_profile': 'wrong'}):
+            self.assertEqual(self.client.post(url + '/start-prompt/claim', json=mismatch).status_code, 409)
+
     def test_crud_persistence_and_non_reused_identity(self):
         self.assertEqual(self.client.get('/tasks').json(), {'api_version': api.API_VERSION, 'tasks': [], 'statuses': api.DEFAULT_STATUSES})
         task = self.create(ref='GH-12', note='note', url='https://github.com/example/repo/issues/12')
@@ -43,7 +111,7 @@ class TasksTests(unittest.TestCase):
         path = self.home / 'task-board/tasks.json'
         self.assertEqual(json.loads(path.read_text())['tasks'], [task])
         edited = self.client.patch('/tasks/' + task['id'], json={'title': ' edited ', 'pinned': True, 'status': 'done',
-            'session_id': 'stored', 'session_profile': 'dev'}).json()
+            'session_id': 'stored', 'session_profile': 'dev', 'expected_start': {'session_id': '', 'session_profile': '', 'start_prompt_state': ''}}).json()
         self.assertEqual(edited['title'], 'edited')
         self.assertEqual(edited['created_at'], task['created_at'])
         self.assertGreater(edited['updated_at'], task['updated_at'])

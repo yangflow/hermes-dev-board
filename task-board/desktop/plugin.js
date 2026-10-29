@@ -8,7 +8,7 @@ const labelChip = (name, color) => jsxs('span', { className: 'tb-label', style: 
 let taskStorage = null
 let taskFetch = null
 let openExternal = null
-const API_VERSION = 3 // Bump when the API contract changes.
+const API_VERSION = 4 // Bump when the API contract changes.
 const staleMessage = '后端为旧版本：需重启/重载网关后生效'
 const backendError = (data, error) => data && data.api_version !== API_VERSION || error && (error.status === 404 || error.statusCode === 404 || /^404\b/.test(error.message || '')) ? new Error(staleMessage) : error
 const rest = async (path, options) => {
@@ -157,9 +157,18 @@ function taskSessionTitle(task) {
 
 const taskLaunchKey = task => JSON.stringify([host.state.profile.get(), task.id, task.created_at])
 
+const startSnapshot = task => Object.fromEntries(['session_id', 'session_profile', 'start_prompt_state'].map(key => [key, task[key] || '']))
 const openTaskSession = link => host.openSession(link.session_id, { profile: link.session_profile, keepAllProfilesScope: false })
 
-async function startTaskSession(task, update, doingStatus = 'doing') {
+const emptyTaskSession = session => session?.message_count === 0 && Array.isArray(session.messages) && session.messages.length === 0 && session.running === false && Array.isArray(session.pending) && session.pending.length === 0 && Array.isArray(session.prompts) && session.prompts.length === 0
+const taskStartPrompt = task => `任务标题：${task.title}
+任务编号：${task.ref || ''}
+任务链接：${task.url || ''}
+任务备注：${task.note || ''}
+
+请先读取任务详情和相关技能，结合现有代码分析需求、影响范围及待确认项，给出简洁方案；本轮先不修改代码。`
+
+async function startTaskSession(task, update, doingStatus = 'doing', retryPrompt = false) {
   const key = taskLaunchKey(task)
   if (startingTasks.has(key)) return
   startingTasks.add(key)
@@ -169,15 +178,37 @@ async function startTaskSession(task, update, doingStatus = 'doing') {
       const profile = host.state.profile.get()
       const gateway = host.getGateway()
       if (!gateway) throw new Error('网关不可用')
-      // The gateway's titled create persists the title and resolves an existing exact-title session.
+      // Titled create can resolve an existing session without a new-session flag.
       const title = taskSessionTitle(task)
+      const existing = await gateway.request('session.list', { title, profile })
       const created = await gateway.request('session.create', { title, profile })
       if (!created?.stored_session_id) throw new Error('网关未返回会话 ID')
-      link = { session_id: created.stored_session_id, session_profile: profile, session_title: title }
+      link = { session_id: created.stored_session_id, session_profile: profile, session_title: title, start_prompt_state: Array.isArray(existing?.sessions) && existing.sessions.length === 0 && emptyTaskSession(created) ? 'pending' : '' }
       launchedTasks.set(key, link)
     }
-    await update({ session_id: link.session_id, session_profile: link.session_profile, session_title: link.session_title || '' })
+    if (!task.session_id) await update({ expected_start: startSnapshot(task), session_id: link.session_id, session_profile: link.session_profile, session_title: link.session_title || '', start_prompt_state: link.start_prompt_state || '' })
     await openTaskSession(link)
+    const shouldSend = retryPrompt && ['pending', 'failed'].includes(link.start_prompt_state) || !task.session_id && link.start_prompt_state === 'pending'
+    if (shouldSend) {
+      if (host.state.profile.get() !== link.session_profile) throw new Error('请切换到任务会话的 profile 后重试分析提示')
+      const snapshot = await host.getGateway().request('session.resume', { session_id: link.session_id, profile: link.session_profile })
+      if (!emptyTaskSession(snapshot)) throw new Error('会话非空或状态不明，未发送分析提示')
+      // Persist before dispatch: a crash or ambiguous exception must never auto-send again.
+      await rest('/tasks/' + task.id + '/start-prompt/claim', { method: 'POST', body: { session_id: link.session_id, session_profile: link.session_profile } })
+      link.start_prompt_state = 'attempting'
+      launchedTasks.set(key, link)
+      const draft = await host.composer.getDraft(link.session_id)
+      if (draft || host.state.profile.get() !== link.session_profile) {
+        await update({ expected_start: startSnapshot(link), start_prompt_state: 'failed' })
+        link.start_prompt_state = 'failed'
+        throw new Error(draft ? '会话有未发送草稿，请保留或处理草稿后重试分析提示' : '请切换到任务会话的 profile 后重试分析提示')
+      }
+      const claimed = host.composer.submit(link.session_id, taskStartPrompt(task))
+      const expected = startSnapshot(link)
+      link.start_prompt_state = claimed ? 'claimed' : 'failed'
+      await update({ expected_start: expected, start_prompt_state: link.start_prompt_state })
+      if (!claimed) throw new Error('会话界面未接收分析提示，请显式重试分析提示')
+    }
     await update({ status: doingStatus })
   } finally { startingTasks.delete(key) }
 }
@@ -309,6 +340,7 @@ function TasksPage() {
             jsxs(DropdownMenu, { onOpenChange: open => { if (open) menuDialog.current = false }, children: [jsx(DropdownMenuTrigger, { asChild: true, children: action('任务操作', event => { menuDialog.current = false; rememberFocus(event) }, { 'aria-label': '任务操作 ' + task.title, className: 'tb-more', children: jsx(Codicon, { name: 'ellipsis', size: 14, 'aria-hidden': true }), onPointerDown: rememberFocus, onKeyDown: rememberFocus }) }), jsxs(DropdownMenuContent, { className: 'tb-root tb-menu', align: 'end', onCloseAutoFocus: event => { if (menuDialog.current) { event.preventDefault(); menuDialog.current = false } }, children: [
             category(task.status) !== 'todo' && !task.session_id && !launchedTasks.has(taskLaunchKey(task)) ? menuAction('开始会话', () => run(() => startTaskSession(task, body => update(task, body), first('doing')))) : null,
             (task.session_id || launchedTasks.has(taskLaunchKey(task))) ? menuAction('重新开始任务', () => { menuDialog.current = true; setRestarting(task) }) : null,
+            ['pending', 'failed'].includes((launchedTasks.get(taskLaunchKey(task)) || task).start_prompt_state) ? menuAction('重试分析提示', () => run(() => startTaskSession(task, body => update(task, body), first('doing'), true))) : null,
             menuAction('编辑', () => edit(task)), menuAction('删除', () => { menuDialog.current = true; setDeleting(task) }),
             menuAction(task.pinned ? '取消置顶' : '置顶', () => run(() => update(task, { pinned: !task.pinned }))),
             menuAction(taskStatus[task.status], () => run(() => update(task, { status: nextStatus(task) })), { 'aria-label': '切换状态 ' + task.title }),
@@ -419,7 +451,7 @@ function TasksPage() {
       jsx(Dialog, { open: !!restarting, onOpenChange: open => { if (!open && !busyRef.current) setRestarting(null) }, children: restarting ? jsxs(DialogContent, { className: 'tb-root tb-dialog', banner: failure?.message, onCloseAutoFocus: restoreFocus, children: [
         jsxs(DialogHeader, { children: [jsx(DialogTitle, { children: '重新开始任务' }), jsx(DialogDescription, { children: '确认断开任务与现有会话的关联？现有会话会保留，不会删除。任务将恢复为待办，之后点击“开始任务”创建会话。' })] }),
         jsxs('div', { className: 'tb-dialog-actions', children: [action('取消', () => setRestarting(null)), action('确认重新开始', () => run(async () => {
-          await update(restarting, { session_id: '', session_profile: '', session_title: '', status: first('todo') })
+          await update(restarting, { expected_start: startSnapshot(launchedTasks.get(taskLaunchKey(restarting)) || restarting), session_id: '', session_profile: '', session_title: '', start_prompt_state: '', status: first('todo') })
           launchedTasks.delete(taskLaunchKey(restarting))
           setRestarting(null)
         }), { variant: 'destructive' })] })

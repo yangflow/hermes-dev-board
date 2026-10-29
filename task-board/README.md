@@ -81,7 +81,7 @@ Columns, filters, statistics and selectors follow this order; use up/down button
 New tasks use the first todo status. Starting moves to first doing, reopening to first todo;
 doing tasks advance to the next configured doing/done status (or first done).
 
-`GET /statuses` returns definitions; `GET /tasks` includes `statuses` and `api_version: 3`.
+`GET /statuses` returns definitions; `GET /tasks` includes `statuses` and `api_version: 4`.
 `PUT /statuses` accepts the full ordered `statuses` and an explicit `migrations` map,
 for example `{"todo":"backlog"}` when removing todo. Removing a used status requires a surviving target.
 Definitions and migrated task statuses save in one atomic transaction; other task fields are preserved.
@@ -103,3 +103,23 @@ Adapters may emit a JSON summary with nonnegative integer `created`, `updated`, 
 An optional `stage_exits` array may contain up to 100 integer exit codes (-255 to 255), without stage names.
 Only these sanitized counts/exit codes, timestamps and a short generated outcome are exposed; raw stdout/stderr,
 credentials and exception text are never returned. Status changes remain explicit user actions or adapter-owned behavior.
+
+## Start analysis prompt (API v4)
+
+Starting a new, verified empty session submits a Chinese analysis-only prompt containing
+`title`, `ref`, `url`, and `note` after opening the exact stored session. It asks the agent
+to read task details and relevant skills, analyze requirements, impact and open questions,
+and propose a concise plan without changing code this turn. Existing linked or exact-title
+sessions are opened without sending. No tracker-specific behavior is added.
+
+`start_prompt_state` persists `pending`, `attempting`, `claimed`, `failed`, or an empty string.
+**重试分析提示** explicitly retries pending/failed prompts, checking the linked profile,
+empty history, no pending requests and draft text first. User drafts are preserved.
+`claimed` means the composer surface accepted the request, not model completion.
+An interrupted `attempting` state is ambiguous and is never automatically retried;
+open the session to check its transcript before sending manually. API v4 requires
+updating both the desktop plugin and backend. The default template is fixed.
+
+Before dispatch, `POST /tasks/{id}/start-prompt/claim` atomically changes pending/failed to attempting under the task lock and requires the exact `session_id` and `session_profile`. Only one competing client succeeds; HTTP 409 stops dispatch. PATCHes that change session linkage or prompt state require `expected_start` containing the previous session ID, profile and prompt state (missing fields use empty strings). Stale linkage writes and restart resets are rejected, and claimed/attempting cannot be changed back to pending.
+
+The only legacy compatibility window is a PATCH without `expected_start` whose fields contain only `session_id`, `session_profile`, and/or `session_title`, while all three stored linkage fields and `start_prompt_state` are empty. This first binding is checked and saved under the task lock; subsequent or competing bindings return 409. It cannot change prompt state; all other linkage/prompt PATCHes still require CAS.
