@@ -1129,7 +1129,7 @@ test('explicit picker uses candidate identity, persists owner, opens and follows
   assert.ok(nodes(render()).some(n => n.type === 'Dialog'))
   const search = nodes(render()).find(n => n.props['aria-label'] === '搜索会话')
   search.props.onChange({ target: { value: 'default' } })
-  assert.ok(!nodes(render()).some(n => n.type === 'Button' && text(n) === 'no task id'))
+  assert.ok(!nodes(render()).some(n => n.type === 'Button' && n.key === JSON.stringify(['dev', 'same'])))
   nodes(render()).find(n => n.props['aria-label'] === '搜索会话').props.onChange({ target: { value: 'same' } })
   await button(render(), 'no task id')()
   assert.equal(nodes(render()).find(n => n.type === 'Button' && text(n) === '确认关联').props.disabled, false)
