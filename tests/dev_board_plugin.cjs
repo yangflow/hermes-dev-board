@@ -400,7 +400,7 @@ test('board repo rows and dock all/per-repo selection include code reviews witho
   const task = { id: '1234', repos }
   let card = h.render(h.api.TaskCard, { task, onPickRepo() {} })
   assert.equal(nodes(card).filter((n) => n.type === h.api.ReviewLinks).length, 0)
-  assert.equal(nodes(card).filter(n => n.props.className === 'db-row-action').length, 2)
+  assert.equal(nodes(card).filter(n => n.props['aria-label']?.endsWith(' 审阅详情')).length, 2)
   const dock = harness()
   dock.results['dev-board'].data.tasks[0].repos = repos
   dock.results['dev-board-task-changes'].data.repos = repos
@@ -779,7 +779,7 @@ test('open repository details follow refreshed branch and commit by directory id
     assert.ok(dialog, 'refresh keeps the selected repository dialog open')
     const paths = nodes(dialog).filter(n => n.props.className === 'db-dialog-path').map(text)
     assert.deepEqual(paths.map(value => value.trim()), [selected.dir, selected.branch])
-    assert.equal(text(nodes(dialog).find(n => n.props.className === 'db-meta')), selected.last)
+    assert.equal(text(nodes(dialog).find(n => n.props.className === 'db-detail-commit')), selected.last)
     assert.doesNotMatch(text(dialog), new RegExp(previous.last))
     const links = nodes(dialog).find(n => n.type === h.api.ReviewLinks)
     assert.equal(links.props.repo, selected, 'ReviewLinks receives the current repository object')
@@ -1248,15 +1248,15 @@ test('worktree removal defaults to hide, delete requires exact identity second c
   const repo = { dir: '/allowed/repo-1234', branch: 'feat/task', head: 'abcdef' }
   h.rest = async (url, options) => { writes.push(plain(options.body)); return options.body.action === 'preview' ? repo : { ok: true } }
   const render = () => h.render(h.api.WorktreeActions, { repo })
-  nodes(render()).find(n => n.type === 'DropdownMenuItem').props.onSelect()
+  nodes(render()).find(n => n.props['aria-label'] === '删除 Worktree').props.onClick()
   assert.equal(nodes(render()).find(n => n.props.type === 'checkbox').props.checked, false)
   assert.match(text(render()), /隐藏不会阻止 cron/)
   await button(render(), '取消')()
   assert.equal(writes.length, 0)
-  nodes(render()).find(n => n.type === 'DropdownMenuItem').props.onSelect()
+  nodes(render()).find(n => n.props['aria-label'] === '删除 Worktree').props.onClick()
   await button(render(), '确认隐藏')()
   assert.equal(writes[0].action, 'hide')
-  nodes(render()).find(n => n.type === 'DropdownMenuItem').props.onSelect()
+  nodes(render()).find(n => n.props['aria-label'] === '删除 Worktree').props.onClick()
   nodes(render()).find(n => n.props.type === 'checkbox').props.onChange({ target: { checked: true } })
   await button(render(), '下一步')()
   assert.equal(writes.at(-1).action, 'preview')

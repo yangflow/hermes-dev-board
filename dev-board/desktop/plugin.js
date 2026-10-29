@@ -6,7 +6,7 @@
 import { cn, host, useQuery, ROUTES_AREA, SIDEBAR_NAV_AREA, PALETTE_AREA } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Badge, Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, EmptyState, ScrollArea, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, StatusDot, Codicon, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@hermes/plugin-sdk'
+import { Badge, Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, EmptyState, ScrollArea, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, StatusDot, Codicon } from '@hermes/plugin-sdk'
 
 
 function taskPrefix(id, map = {}) {
@@ -16,6 +16,13 @@ function taskPrefix(id, map = {}) {
 }
 
 const boardStyles = `
+.dev-board .db-repo-actions { display:flex; align-items:center; justify-content:flex-end; gap:4px; }
+.dev-board .db-repo-actions button { width:28px; height:28px; padding:0; }
+.dev-board .db-review-details { display:flex; flex-direction:column; gap:6px; min-width:0; }
+.dev-board .db-review-details p { margin:0 0 10px; }
+.dev-board .db-review-details .db-review { margin-top:4px; padding-top:14px; }
+.dev-board .db-detail-commit { font-size:13px; line-height:1.6; overflow-wrap:anywhere; }
+
 .dev-board .db-session-search { width:100%; margin-bottom:10px; }
 .dev-board .db-session-option { width:100%; justify-content:flex-start; padding:10px 12px; border-radius:6px; flex-shrink:0; }
 .dev-board .db-session-option[aria-pressed=true] { background:var(--ui-row-active-background); box-shadow:inset 2px 0 var(--ui-accent); }
@@ -958,22 +965,22 @@ function TaskCard({ task, activeZt, editorName = 'VS Code', expanded = true, onT
         const reviews = data?.reviews || []
         return jsxs('tbody', { children: [
           jsxs('tr', { children: [
-            jsxs('td', { 'data-label': '仓库', children: [jsx('strong', { className: 'db-repo-name', title: r.dir, children: r.repo }), jsx(WorktreeActions, { repo: r }), r.dirty > 0 ? jsx('span', { className: 'db-dirty', children: '● ' + r.dirty + ' 未提交' }) : null] }),
+            jsxs('td', { 'data-label': '仓库', children: [jsx('strong', { className: 'db-repo-name', title: r.dir, children: r.repo }), r.dirty > 0 ? jsx('span', { className: 'db-dirty', children: '● ' + r.dirty + ' 未提交' }) : null] }),
             jsxs('td', { 'data-label': '分支 + 最新提交', children: [jsx('div', { className: 'db-branch', title: r.branch || '(detached)', children: r.branch || '(detached)' }), jsxs('div', { className: 'db-commit', title: r.last || '—', children: [jsx('span', { className: 'db-hash', children: (r.last || '—').split(' ')[0] }), ' ' + (r.last || '').split(' ').slice(1).join(' ')] })] }),
             jsx('td', { 'data-label': '合并请求', children: reviews.length ? reviews.map(v => jsx('button', { type: 'button', className: 'db-table-link', title: v.title, onClick: () => openReview(v.url), children: (v.provider === 'gitlab' ? '!' : '#') + v.number + ' ↗' }, v.url)) : '—' }),
             jsx('td', { 'data-label': '目标分支', className: 'db-target', children: reviews.length ? [...new Set(reviews.map(v => v.target_branch))].map(v => jsx('div', { title: v, children: '↳ ' + v }, v)) : '—' }),
             jsx('td', { 'data-label': '状态', children: reviews.length ? reviews.map(v => pill(v.state === 'merged' ? '✓ 已合并' : v.draft ? '草稿' : v.state === 'closed' ? '已关闭' : '待合并', v.state === 'merged' ? 'good' : v.draft || v.state === 'closed' ? 'muted' : 'warn')) : pill(entry?.error ? '查询失败' : !data ? '加载中' : ['ok', 'empty'].includes(data.status) ? '无关联审阅' : ['error', 'timeout', 'partial'].includes(data.status) ? '查询失败' : '未配置') }),
-            jsx('td', { children: jsx('button', { type: 'button', className: 'db-row-action', 'aria-label': r.repo + ' 审阅详情', 'aria-haspopup': 'dialog', onClick: event => { detailTrigger.current = event?.currentTarget; setDetailDir(r.dir) }, children: '⋯' }) })
+            jsx('td', { children: jsxs('div', { className: 'db-repo-actions', children: [jsx(Button, { variant: 'ghost', size: 'sm', 'aria-label': r.repo + ' 审阅详情', 'aria-haspopup': 'dialog', onClick: event => { detailTrigger.current = event?.currentTarget; setDetailDir(r.dir) }, children: jsx(Codicon, { name: 'ellipsis', size: 14 }) }), jsx(WorktreeActions, { repo: r })] }) })
           ] })
         ] }, r.dir)
       })
     ] }) : null,
     details ? workspaceDialog({ open: true, returnFocus: detailTrigger, onOpenChange: open => { if (!open) setDetailDir(null) },
       title: details.repo + ' · 代码审阅', description: title,
-      children: jsxs('div', { children: [
-        jsx('p', { className: 'db-dialog-path', children: details.dir }),
-        jsxs('p', { className: 'db-dialog-path', children: [jsx(Codicon, { name: 'git-branch', size: 12 }), ' ', details.branch || '(detached)'] }),
-        jsx('p', { className: 'db-meta', children: details.last || '暂无提交信息' }),
+      children: jsxs('div', { className: 'db-review-details', children: [
+        jsx('span', { className: 'db-meta', children: '工作目录' }), jsx('p', { className: 'db-dialog-path', children: details.dir }),
+        jsx('span', { className: 'db-meta', children: '分支' }), jsxs('p', { className: 'db-dialog-path', children: [jsx(Codicon, { name: 'git-branch', size: 12 }), ' ', details.branch || '(detached)'] }),
+        jsx('span', { className: 'db-meta', children: '最新提交' }), jsx('p', { className: 'db-detail-commit', children: details.last || '暂无提交信息' }),
         jsx(ReviewLinks, { repo: details, showRepo: false })
       ] }) }) : null
   ] })
@@ -1079,7 +1086,7 @@ function WorktreeActions({ repo }) {
     } catch (error) { host.notify({ kind: 'error', message: error.message || String(error) }) }
     finally { setBusy(false) }
   }
-  return jsxs('span', { children: [jsxs(DropdownMenu, { children: [jsx(DropdownMenuTrigger, { asChild: true, children: jsx(Button, { variant: 'ghost', size: 'sm', ref: trigger, 'aria-label': '更多仓库操作', children: jsx(Codicon, { name: 'ellipsis', size: 14 }) }) }), jsx(DropdownMenuContent, { align: 'end', onCloseAutoFocus: event => event.preventDefault(), children: jsx(DropdownMenuItem, { onSelect: () => { setDeleteDirectory(false); setIdentity(null); setOpen(true) }, children: '删除 Worktree' }) })] }),
+  return jsxs('span', { children: [jsx(Button, { variant: 'ghost', size: 'sm', ref: trigger, 'aria-label': '删除 Worktree', title: '删除 Worktree', onClick: () => { setDeleteDirectory(false); setIdentity(null); setOpen(true) }, children: jsx(Codicon, { name: 'trash', size: 14 }) }),
     open ? workspaceDialog({ open, onOpenChange: setOpen, returnFocus: trigger, title: identity ? '再次确认删除目录' : '删除 Worktree',
       description: '默认只持久隐藏，可恢复。隐藏不会阻止 cron 自动清理。',
       children: identity ? jsxs('div', { children: [jsx('p', { className: 'db-dialog-path', children: identity.dir }), jsx('p', { className: 'db-dialog-path', children: identity.branch }), jsx('p', { className: 'db-dialog-path', children: identity.head })] }) : jsx('label', { children: [jsx('input', { type: 'checkbox', checked: deleteDirectory, onChange: event => setDeleteDirectory(event.target.checked) }), '同时删除本地目录（需要再次确认）'] }),
