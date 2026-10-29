@@ -23,7 +23,7 @@ function harness() {
   }
   const session = { id: 'stored', title: 'ZT-1234 task', label: 'ZT-1234', profile: 'dev' }
   const results = {
-    'dev-board': { data: { api_version: 2, tasks: [{ id: '1234', repos: [] }, { id: '5678', repos: [] }] } },
+    'dev-board': { data: { api_version: 3, tasks: [{ id: '1234', repos: [] }, { id: '5678', repos: [] }] } },
     'dev-board-sessions': { data: { zt_sessions: { 1234: [session] } } },
     'dev-board-task-changes': { data: { files: [], repos: [] } },
     'dev-board-diff': { data: { diff: '@@ -1 +1 @@\n-old backend line\n+new backend line\n' } }
@@ -194,7 +194,7 @@ test('board opener awaits durable profile session open before docking beside cha
   }
   const click = button(h.render(h.api.BoardPage), '在会话右侧打开')
   const opening = click()
-  assert.deepEqual(plain(h.calls), [['session', 'tip', { profile: 'dev' }]])
+  assert.deepEqual(plain(h.calls), [['session', 'tip', { profile: 'dev', keepAllProfilesScope: false }]])
   finish()
   await opening
   assert.equal(h.calls[1][0], 'dock')
@@ -223,7 +223,7 @@ test('board and session-chip open rejections surface errors; failed open does no
 test('session chip uses SDK profile option; palette opening catches SDK dock errors', async () => {
   const h = harness()
   await h.api.SessionChip({ s: h.session }).props.onClick()
-  assert.deepEqual(plain(h.calls[0]), ['session', 'stored', { profile: 'dev' }])
+  assert.deepEqual(plain(h.calls[0]), ['session', 'stored', { profile: 'dev', keepAllProfilesScope: false }])
   h.host.openWorkspace = () => { throw new Error('dock unavailable') }
   await h.registrations.find((r) => r.id === 'open-dock').data.run()
   assert.match(h.notices.at(-1).message, /dock unavailable/)
@@ -495,14 +495,15 @@ test('one session opens directly and reports open failures; no sessions keep edi
   const h = harness()
   const render = () => h.render(h.api.TaskCard, { task: { id: '1234', repos: [] } })
   await button(render(), '打开会话')()
-  assert.deepEqual(plain(h.calls.at(-1)), ['session', 'stored', { profile: 'dev' }])
+  assert.deepEqual(plain(h.calls.at(-1)), ['session', 'stored', { profile: 'dev', keepAllProfilesScope: false }])
   assert.equal(nodes(render()).filter(n => n.type === 'Select').length, 0)
   h.host.openSession = async () => { throw new Error('profile unavailable') }
   await button(render(), '打开会话')()
   assert.match(h.notices.at(-1).message, /打开会话失败：profile unavailable/)
   h.results['dev-board-sessions'].data.zt_sessions['1234'] = []
   const card = render()
-  assert.ok(!nodes(card).some(n => n.type === 'Button' && /会话/.test(text(n))))
+  assert.ok(button(card, '关联已有会话'))
+  assert.ok(button(card, '创建会话'))
   assert.equal(nodes(card).filter(n => n.type === 'Select').length, 0)
   assert.ok(button(card, '在 VS Code 打开'))
 })
@@ -528,7 +529,7 @@ test('single open action toggles full profile session choices without opening a 
   for (const profile of ['default', 'dev']) {
     button(render(), '打开会话')()
     await nodes(render()).find(n => n.type === 'Select').props.onValueChange(JSON.stringify([profile, 'stored']))
-    assert.deepEqual(plain(h.calls.at(-1)), ['session', 'stored', { profile }])
+    assert.deepEqual(plain(h.calls.at(-1)), ['session', 'stored', { profile, keepAllProfilesScope: false }])
     assert.equal(nodes(render()).filter(n => n.type === 'Select').length, 0)
   }
   h.host.openSession = async () => { throw new Error('profile unavailable') }
@@ -537,7 +538,7 @@ test('single open action toggles full profile session choices without opening a 
   assert.match(h.notices.at(-1).message, /打开会话失败：profile unavailable/)
 })
  test('stale backend notice explains gateway reload in board and dock', () => {
-  for (const version of [undefined, 1, 3]) {
+  for (const version of [undefined, 1, 2, 4]) {
     for (const component of ['BoardPage', 'DockPanel']) {
       const h = harness()
       h.results['dev-board'].data.api_version = version
@@ -1109,5 +1110,111 @@ test('pending, failed and empty changes/diffs keep task context without claiming
     assert.ok(nodes(panel).some(n => n.props.className === 'db-context-title'))
     assert.ok(nodes(panel).some(n => /加载文件差异|文件差异加载失败|无可显示的差异/.test(n.props.title || '')))
     assert.doesNotMatch(text(panel), /无未提交变更/)
+  }
+})
+
+test('explicit picker uses candidate identity, persists owner, opens and follows exact association', async () => {
+  const h = harness()
+  const selected = { id: 'same', profile: 'dev', title: 'no task id', session_ids: ['same'] }
+  h.results['dev-board-sessions'].data = { zt_sessions: {}, candidates: [selected, { ...selected, profile: 'default' }] }
+  h.results['dev-board-sessions'].refetch = async () => {}
+  h.rest = async (url, options) => {
+    assert.equal(url, '/task_session')
+    assert.deepEqual(plain(options.body), { task: '1234', action: 'link', id: 'same', profile: 'dev' })
+    return { ok: true, link: selected }
+  }
+  const render = () => h.render(h.api.TaskCard, { task: { id: '1234', repos: [] } })
+  await button(render(), '关联已有会话')()
+  const picker = nodes(render()).find(n => n.type === 'Select')
+  assert.equal(nodes(render()).filter(n => n.type === 'SelectItem').length, 2)
+  await picker.props.onValueChange(JSON.stringify(['dev', 'same']))
+  assert.ok(!nodes(render()).some(n => n.type === 'Button' && text(n).includes('创建会话')))
+  await button(render(), '打开会话')()
+  assert.deepEqual(plain(h.calls.at(-1)), ['session', 'same', { profile: 'dev', keepAllProfilesScope: false }])
+  const fresh = harness()
+  fresh.results['dev-board-sessions'].data.zt_sessions = { 1234: [selected] }
+  fresh.state.focusedStoredSessionId.set('same')
+  fresh.state.focusedSessionProfile.set('dev')
+  assert.equal(fresh.render(fresh.api.useActiveZt).active.id, '1234')
+})
+
+function creationHarness() {
+  const h = harness()
+  const query = h.results['dev-board-sessions']
+  query.data = { zt_sessions: {}, candidates: [] }
+  h.state.profile.set('dev')
+  let link = null
+  h.rest = async (url, options) => {
+    assert.equal(url, '/task_session')
+    const b = options.body
+    h.calls.push(['write', b.action])
+    if (b.action === 'claim') link ||= { title: 'Dev Board #1234 · stable', profile: b.profile, prompt_state: 'pending' }
+    if (b.action === 'link') link = { ...link, id: b.id, session_ids: [b.id] }
+    if (b.action === 'dispatch') {
+      if (link.prompt_state !== 'pending') throw new Error('already attempted')
+      link.prompt_state = 'attempting'
+    }
+    if (b.action === 'rejected') link.prompt_state = 'pending'
+    return { ok: true, link: { ...link } }
+  }
+  query.refetch = async () => { if (link?.id) query.data.zt_sessions = { 1234: [{ ...link }] } }
+  h.host.request = async (method, params) => {
+    h.calls.push(['rpc', method, params])
+    return method === 'session.create' ? { stored_session_id: 'exact-stored' } : { message_count: 0, messages: [], running: false, pending: [], prompts: [] }
+  }
+  h.host.composer = { getDraft: async id => { assert.equal(id, 'exact-stored'); return '' }, submit: (id, prompt) => { h.calls.push(['submit', id, prompt]); return true } }
+  h.renderCard = () => h.render(h.api.TaskCard, { task: { id: '1234', repos: [{ repo: 'service', branch: 'feat/test', dir: '/work/service-1234' }] } })
+  return h
+}
+
+test('create uses current owner, stable native request identity, persists before exact stored submit and includes analysis context', async () => {
+  const h = creationHarness()
+  await button(h.renderCard(), '创建会话')()
+  const create = h.calls.find(c => c[0] === 'rpc' && c[1] === 'session.create')
+  assert.deepEqual(plain(create[2]), { title: 'Dev Board #1234 · stable', profile: 'dev', request_id: 'Dev Board #1234 · stable' })
+  const sent = h.calls.find(c => c[0] === 'submit')
+  assert.equal(sent[1], 'exact-stored')
+  for (const text of ['#1234', 'service', 'feat/test', '/work/service-1234', 'FIRST ANALYZE ONLY', '禁止修改代码']) assert.ok(sent[2].includes(text))
+  assert.ok(h.calls.findIndex(c => c[0] === 'write' && c[1] === 'dispatch') < h.calls.indexOf(sent))
+  assert.ok(button(h.renderCard(), '打开会话'))
+  assert.ok(!nodes(h.renderCard()).some(n => n.type === 'Button' && text(n).includes('重试分析提示')))
+})
+
+test('open/submit failures retry same association; ambiguous submit never retries automatically', async () => {
+  const h = creationHarness()
+  const open = h.host.openSession
+  h.host.openSession = async () => { throw new Error('open failed') }
+  await button(h.renderCard(), '创建会话')()
+  assert.match(h.notices.at(-1).message, /已关联.*open failed/)
+  h.host.openSession = open
+  h.host.composer.submit = () => false
+  await button(h.renderCard(), '重试分析提示')()
+  assert.match(h.notices.at(-1).message, /未接收/)
+  assert.ok(button(h.renderCard(), '重试分析提示'))
+  h.host.composer.submit = () => { throw new Error('ambiguous') }
+  await button(h.renderCard(), '重试分析提示')()
+  assert.ok(!nodes(h.renderCard()).some(n => n.type === 'Button' && text(n).includes('重试分析提示')))
+  assert.equal(h.calls.filter(c => c[0] === 'rpc' && c[1] === 'session.create').length, 1)
+})
+
+test('create response loss reuses native request identity; nonempty session and late draft block sending', async () => {
+  for (const kind of ['lost', 'nonempty', 'draft', 'late-message', 'profile']) {
+    const h = creationHarness()
+    const request = h.host.request
+    if (kind === 'lost') {
+      let first = true
+      h.host.request = async (method, params) => { if (first) { first = false; h.calls.push(['lost', plain(params)]); throw new Error('response lost') } return request(method, params) }
+      await button(h.renderCard(), '创建会话')()
+      await button(h.renderCard(), '创建会话')()
+      assert.deepEqual(plain(h.calls.find(c => c[0] === 'rpc' && c[1] === 'session.create')[2]), h.calls.find(c => c[0] === 'lost')[1])
+    } else {
+      if (kind === 'nonempty') h.host.request = async (m, p) => m === 'session.resume' ? { message_count: 1, messages: ['user'], running: false, pending: [], prompts: [] } : request(m, p)
+      else if (kind === 'draft') { let count = 0; h.host.composer.getDraft = async () => ++count === 1 ? '' : 'user draft' }
+      else if (kind === 'late-message') { let count = 0; h.host.request = async (m, p) => m === 'session.resume' && ++count === 2 ? { message_count: 1, messages: ['user'], running: false, pending: [], prompts: [] } : request(m, p) }
+      else { let count = 0; h.host.composer.getDraft = async () => { if (++count === 2) h.state.profile.set('default'); return '' } }
+      await button(h.renderCard(), '创建会话')()
+      assert.equal(h.calls.filter(c => c[0] === 'submit').length, 0)
+      assert.ok(button(h.renderCard(), '重试分析提示'))
+    }
   }
 })

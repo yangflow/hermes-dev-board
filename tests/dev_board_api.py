@@ -250,6 +250,110 @@ class PluginApiTests(unittest.TestCase):
             for row in rows:
                 con.execute(f"INSERT INTO sessions ({','.join(row)}) VALUES ({','.join('?' for _ in row)})", tuple(row.values()))
 
+    def test_explicit_session_persistence_owner_validation_and_active_mapping(self):
+        self.repo("service-1234")
+        self.repo("other-5678")
+        self.database(self.home / "state.db", [{"id": "same", "title": "default unnamed"}])
+        db = self.home / "profiles/dev/state.db"
+        self.database(db, [
+            {"id": "same", "title": "no task number"},
+            {"id": "inferred", "title": "ZT-5678 previous task"},
+            {"id": "hidden", "hidden": 1}, {"id": "archived", "archived": 1},
+            {"id": "child", "parent_session_id": "same", "model_config": '{"_branched_from":"same"}'},
+            {"id": "delegate", "source": "subagent"},
+        ])
+        def link(task, sid, profile="dev"):
+            return self.client.post("/task_session", json={"task": task, "action": "link", "id": sid, "profile": profile})
+        self.assertEqual(link("missing", "same").status_code, 404)
+        for sid in ("hidden", "archived", "child", "delegate", "missing"):
+            self.assertEqual(link("1234", sid).status_code, 400)
+        self.assertEqual(link("1234", "same").status_code, 200)
+        stored = json.loads((self.home / "dev-board/task-sessions.json").read_text())
+        self.assertEqual((stored["1234"]["id"], stored["1234"]["profile"]), ("same", "dev"))
+        self.assertEqual(link("5678", "same").status_code, 409)
+        self.assertEqual(self.client.get("/zt_sessions").json()["zt_sessions"]["1234"][0]["title"], "no task number")
+        with sqlite3.connect(db) as con:
+            con.execute("UPDATE sessions SET end_reason='compression' WHERE id='same'")
+            con.execute("INSERT INTO sessions (id,parent_session_id) VALUES ('tip','same')")
+        entry = self.client.get("/zt_sessions").json()["zt_sessions"]["1234"][0]
+        self.assertEqual(entry["id"], "tip")
+        self.assertIn("same", entry["session_ids"])
+        # A fresh durable association overrides another task's title inference.
+        with api._session_store() as data:
+            data.clear()
+        self.assertEqual(link("1234", "inferred").status_code, 200)
+        mapping = self.client.get("/zt_sessions").json()["zt_sessions"]
+        self.assertEqual(mapping["1234"][0]["id"], "inferred")
+        self.assertEqual(mapping["5678"], [])
+
+    def test_compressed_non_main_roots_are_not_candidates_or_linkable(self):
+        self.repo("service-1234")
+        rows = [{"id": "root", "title": "ordinary root"}]
+        identities = {
+            "branch": {"parent_session_id": "root", "model_config": '{"_branched_from":"root"}'},
+            "reset": {"parent_session_id": "root", "model_config": '{"_reset_from":"root"}'},
+            "delegate": {"parent_session_id": "root", "model_config": '{"_delegate_from":"root"}'},
+            "branch-marker": {"model_config": '{"_branched_from":"root"}'},
+            "reset-marker": {"model_config": '{"_reset_from":"root"}'},
+            "delegate-marker": {"model_config": '{"_delegate_from":"root"}'},
+            "subagent": {"source": "subagent"},
+            "subagent-title": {"title": "Subagent: child"},
+            "hidden": {"hidden": 1},
+            "archived": {"archived": 1},
+            "orphan": {"parent_session_id": "missing"},
+            "main": {"title": "ZT-1234 main"},
+        }
+        for sid, identity in identities.items():
+            rows.extend([
+                {"id": sid, "end_reason": "compression", **identity},
+                {"id": sid + "-middle", "parent_session_id": sid, "end_reason": "compression"},
+                {"id": sid + "-tip", "parent_session_id": sid + "-middle", "last_activity_at": 5},
+            ])
+        db = self.home / "state.db"
+        self.database(db, rows)
+        connect = sqlite3.connect
+        memory = connect(":memory:", check_same_thread=False)
+        with connect(db) as fixture:
+            fixture.backup(memory)
+        from unittest.mock import Mock
+        memory_connection = Mock(wraps=memory)
+        memory_connection.close = Mock()
+        memory.row_factory = sqlite3.Row
+        try:
+            for storage in ("fixture", "memory"):
+                with self.subTest(storage=storage), patch.object(sqlite3, "connect",
+                        side_effect=connect if storage == "fixture" else lambda *a, **kw: memory_connection):
+                    candidates = api._session_catalog()["candidates"]
+                    self.assertEqual({s["id"] for s in candidates}, {"root", "main-tip"})
+                    main = next(s for s in candidates if s["id"] == "main-tip")
+                    self.assertEqual(main["session_ids"], ["main-tip", "main-middle", "main"])
+                    for sid in identities:
+                        if sid == "main":
+                            continue
+                        for suffix in ("", "-middle", "-tip"):
+                            response = self.client.post("/task_session", json={
+                                "task": "1234", "action": "link", "id": sid + suffix, "profile": "default"})
+                            self.assertEqual(response.status_code, 400, sid + suffix)
+                    self.assertEqual(self.client.post("/task_session", json={
+                        "task": "1234", "action": "link", "id": "main-tip", "profile": "default"}).status_code, 200)
+        finally:
+            memory.close()
+
+    def test_creation_claim_and_prompt_dispatch_are_durable_and_atomic(self):
+        self.repo("service-1234")
+        def update(action, **extra):
+            return self.client.post("/task_session", json={"task": "1234", "action": action, **extra})
+        claimed = update("claim", profile="dev").json()["link"]
+        self.assertEqual(update("claim", profile="default").json()["link"], claimed)
+        self.database(self.home / "profiles/dev/state.db", [{"id": "new", "title": claimed["title"]}])
+        self.assertEqual(update("link", id="new", profile="dev").status_code, 200)
+        self.assertEqual(update("dispatch", id="new", profile="default").status_code, 409)
+        self.assertEqual(update("dispatch", id="new", profile="dev").status_code, 200)
+        self.assertEqual(update("dispatch", id="new", profile="dev").status_code, 409)
+        self.assertEqual(update("claim", profile="dev").json()["link"]["prompt_state"], "attempting")
+        self.assertEqual(update("rejected", id="new", profile="dev").status_code, 200)
+        self.assertEqual(update("dispatch", id="new", profile="dev").status_code, 200)
+
     def test_session_profiles_lineage_and_subagent_filter(self):
         default = self.home / "state.db"
         dev = self.home / "profiles" / "dev" / "state.db"

@@ -17,6 +17,7 @@ settings in $HERMES_HOME/dev-board/settings.json:
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
@@ -27,14 +28,16 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
+from contextlib import contextmanager
 from collections import OrderedDict
 from pathlib import Path
 from urllib.parse import quote, urlencode, urlsplit
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query
 
 router = APIRouter()
-API_VERSION = 2
+API_VERSION = 3
 
 _review_cache = OrderedDict()
 _review_cache_lock = threading.Lock()
@@ -394,6 +397,18 @@ def _model_config(raw) -> dict:
 
 @router.get("/zt_sessions")
 def task_sessions() -> dict:
+    out = _session_catalog()
+    with _session_store() as data:
+        for task, link in data.items():
+            selected = next((s for s in out["candidates"] if link.get("id") in s["session_ids"] and s["profile"] == link["profile"]), None)
+            if selected and task in {t for _, t, _ in _task_worktrees()}:
+                for inferred, entries in out["zt_sessions"].items():
+                    out["zt_sessions"][inferred] = [s for s in entries if not (s["profile"] == selected["profile"] and set(s["session_ids"]) & set(selected["session_ids"]))]
+                out["zt_sessions"][task] = [{**selected, "label": "#" + task, "prompt_state": link.get("prompt_state", "")}]
+    return out
+
+
+def _session_catalog() -> dict:
     """Task number -> sessions whose title carries a matching id, across profile stores."""
     import sqlite3
 
@@ -401,6 +416,7 @@ def task_sessions() -> dict:
         task for _, task, _ in _task_worktrees()
     }
     out: dict[str, list] = {}
+    candidates = []
     for db in _session_dbs():
         try:
             con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
@@ -429,22 +445,94 @@ def task_sessions() -> dict:
                     child = parent
                 title = next((r["title"] for r in chain if r["title"]), "")
                 m = _TITLE_RE.search(title or "")
-                if not m:
-                    continue
-                full = m.group(1)
+                full = m.group(1) if m else ""
                 num = re.search(r"(\d+)$", full)
-                if num:
-                    root = chain[-1]["id"]
-                    entry = {"id": row["id"], "title": title, "label": full, "profile": profile,
-                             "session_ids": [r["id"] for r in chain]}
-                    if root not in lineages or len(chain) > len(lineages[root][1]["session_ids"]):
-                        lineages[root] = (num.group(1), entry)
+                root = chain[-1]["id"]
+                entry = {"id": row["id"], "title": title, "label": full, "profile": profile,
+                         "session_ids": [r["id"] for r in chain]}
+                if root not in lineages or len(chain) > len(lineages[root][1]["session_ids"]):
+                    lineages[root] = (num.group(1) if num else None, entry)
             for num, entry in lineages.values():
-                if num not in temporary_only:
+                root = by_id[entry["session_ids"][-1]]
+                config = _model_config(root["model_config"])
+                if (not root["parent_session_id"] and root["source"] != "subagent"
+                        and not root["hidden"] and not root["archived"]
+                        and not any(config.get(k) for k in ("_branched_from", "_reset_from", "_delegate_from"))
+                        and not re.match(r"^\s*Subagent\s*:", root["title"] or "", re.I)):
+                    candidates.append(entry)
+                if num and num not in temporary_only:
                     out.setdefault(num, []).append(entry)
         except Exception:
             continue
-    return {"zt_sessions": out}
+    return {"zt_sessions": out, "candidates": candidates}
+
+
+@contextmanager
+def _session_store():
+    path = Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))).expanduser() / "dev-board/task-sessions.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path.with_suffix(".lock"), "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            data = json.loads(path.read_text()) if path.exists() else {}
+            before = json.dumps(data)
+            yield data
+            if json.dumps(data) != before:
+                temporary = None
+                try:
+                    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=".task-sessions-", delete=False) as stream:
+                        temporary = stream.name
+                        json.dump(data, stream, ensure_ascii=False)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    os.replace(temporary, path)
+                finally:
+                    if temporary and os.path.exists(temporary):
+                        os.unlink(temporary)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+@router.post("/task_session")
+def update_task_session(body: dict = Body(...)) -> dict:
+    task = body.get("task")
+    if task not in {t for _, t, _ in _task_worktrees()}:
+        raise HTTPException(404, "task is not discovered")
+    action = body.get("action")
+    with _session_store() as data:
+        link = data.get(task)
+        if action == "claim":
+            if not link:
+                profile = body.get("profile")
+                if not isinstance(profile, str) or not profile:
+                    raise HTTPException(400, "profile required")
+                if _session_catalog()["zt_sessions"].get(task):
+                    raise HTTPException(409, "task already has sessions; refresh and select")
+                link = {"profile": profile, "title": "Dev Board #" + task + " · " + uuid.uuid4().hex, "prompt_state": "pending"}
+                data[task] = link
+            elif link.get("id") and not any(link["profile"] == s["profile"] and link["id"] in s["session_ids"] for s in _session_catalog()["candidates"]):
+                raise HTTPException(409, "linked session is no longer accessible; refresh")
+        elif action == "link":
+            selected = next((s for s in _session_catalog()["candidates"] if s["id"] == body.get("id") and s["profile"] == body.get("profile")), None)
+            if not selected:
+                raise HTTPException(400, "session is not accessible or eligible")
+            if any(other != task and stored.get("profile") == selected["profile"] and stored.get("id") in selected["session_ids"] for other, stored in data.items()):
+                raise HTTPException(409, "session is explicitly linked to another task")
+            if link and (link.get("id") not in selected["session_ids"] or link["profile"] != selected["profile"]):
+                if link.get("id") or link["profile"] != selected["profile"] or link["title"] != selected["title"]:
+                    raise HTTPException(409, "task session claim changed")
+            link = {**(link or {}), **selected}
+            data[task] = link
+        elif action in ("dispatch", "rejected"):
+            if not link or link.get("id") != body.get("id") or link["profile"] != body.get("profile"):
+                raise HTTPException(409, "task session changed")
+            expected = "pending" if action == "dispatch" else "attempting"
+            if link.get("prompt_state") != expected:
+                raise HTTPException(409, "analysis prompt already attempted")
+            link["prompt_state"] = "attempting" if action == "dispatch" else "pending"
+        else:
+            raise HTTPException(400, "invalid action")
+        return {"ok": True, "link": dict(link)}
 
 
 @router.get("/task_changes")

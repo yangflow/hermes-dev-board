@@ -226,7 +226,7 @@ const boardStyles = `
 `
 const boardStyle = () => jsx('style', { children: boardStyles })
 
-const API_VERSION = 2
+const API_VERSION = 3
 const staleBackend = (data) => data && data.api_version !== API_VERSION
 const staleNotice = () => jsx(EmptyState, { title: '后端版本不匹配', description: '磁盘插件与运行中的网关 API 版本不一致。请重启加载 Dev Board 的网关，再等待自动刷新或重新加载页面；仅刷新页面不会重载后端路由。' })
 const REFRESH_MS = 15000
@@ -368,7 +368,7 @@ async function openDock(map) {
   try {
     const active = activeTask(map || (await rest('/zt_sessions')).zt_sessions || {})
     if (!lifetime?.active) return
-    if (active) await host.openSession(active.session.id, { profile: active.session.profile || 'default' })
+    if (active) await host.openSession(active.session.id, { profile: active.session.profile || 'default', keepAllProfilesScope: false })
     else host.navigate('/')
     if (!lifetime?.active) return
     closeDock = host.openWorkspace('worktree', {
@@ -778,7 +778,7 @@ function DockPanel() {
 
 // ─── Sidebar board page (full board, as before + dock opener) ────────────────
 async function openTaskSession(s) {
-  try { await host.openSession(s.id, { profile: s.profile || 'default' }) }
+  try { await host.openSession(s.id, { profile: s.profile || 'default', keepAllProfilesScope: false }) }
   catch (error) { host.notify({ kind: 'error', message: '打开会话失败：' + (error.message || String(error)) }) }
 }
 
@@ -808,12 +808,71 @@ function taskReviewSummary(task, reviewData = {}) {
     waiting: reviews.some(r => r.state !== 'merged') || failed || (!known && task.repos.some(r => r.dirty > 0)) }
 }
 
+const startingSessions = new Set()
+const emptySession = s => s?.message_count === 0 && Array.isArray(s.messages) && !s.messages.length && s.running === false && Array.isArray(s.pending) && !s.pending.length && Array.isArray(s.prompts) && !s.prompts.length
+const analysisPrompt = task => `任务编号：#${task.id}
+${task.repos.map(r => `仓库：${r.repo}\n分支：${r.branch}\nWorktree：${r.dir}`).join('\n\n')}
+
+FIRST ANALYZE ONLY：先读取任务与仓库规范，分析需求、影响范围和待确认项，给出方案。本轮禁止修改代码。`
+
+async function createTaskSession(task, refresh) {
+  if (startingSessions.has(task.id)) return
+  startingSessions.add(task.id)
+  let saved = false
+  let attempted = false
+  try {
+    const profile = host.state.profile.get() || 'default'
+    const update = async (action, extra = {}) => {
+      const result = await rest('/task_session', { method: 'POST', body: { task: task.id, action, ...extra } })
+      if (!result?.ok || !result.link) throw new Error(result?.detail || '保存会话关联失败')
+      return result
+    }
+    let { link } = await update('claim', { profile })
+    if (profile !== link.profile) throw new Error('请切换到 ' + link.profile + ' 后重试')
+    if (!link.id) {
+      const created = await host.request('session.create', { title: link.title, profile: link.profile, request_id: link.title })
+      if (!created?.stored_session_id) throw new Error('网关未返回 stored session ID；重试将使用同一创建标题')
+      ;({ link } = await update('link', { id: created.stored_session_id, profile: link.profile }))
+    }
+    saved = true
+    await host.openSession(link.id, { profile: link.profile, keepAllProfilesScope: false })
+    if (link.prompt_state !== 'pending') return
+    if (host.state.profile.get() !== link.profile) throw new Error('请切换到会话所属 profile 后重试')
+    const snapshot = await host.request('session.resume', { session_id: link.id, profile: link.profile })
+    if (!emptySession(snapshot)) throw new Error('会话非空或状态不明，未发送分析提示')
+    const draft = await host.composer.getDraft(link.id)
+    if (draft !== '' || host.state.profile.get() !== link.profile) throw new Error('草稿非空、界面未就绪或 profile 已切换，未发送分析提示')
+    attempted = true
+    await update('dispatch', { id: link.id, profile: link.profile })
+    const finalSnapshot = await host.request('session.resume', { session_id: link.id, profile: link.profile })
+    const finalDraft = await host.composer.getDraft(link.id)
+    if (!emptySession(finalSnapshot) || finalDraft !== '' || host.state.profile.get() !== link.profile) {
+      await update('rejected', { id: link.id, profile: link.profile })
+      attempted = false
+      throw new Error('会话、草稿或 profile 已变化，未发送分析提示，可重试')
+    }
+    // An ambiguous submit failure stays attempting: never automatically send twice.
+    if (!host.composer.submit(link.id, analysisPrompt(task))) {
+      await update('rejected', { id: link.id, profile: link.profile })
+      attempted = false
+      throw new Error('会话界面未接收分析提示，可重试分析提示')
+    }
+  } catch (error) {
+    host.notify({ kind: 'error', message: (attempted ? '会话已关联；分析提示发送结果待确认，请打开会话检查；' : saved ? '会话已关联；' : '创建或关联未完成；') + (error.message || String(error)) })
+  } finally { startingSessions.delete(task.id); await refresh?.() }
+}
+
 function TaskCard({ task, activeZt, editorName = 'VS Code', expanded = true, onToggle, reviewData = {} }) {
   const sessions = useSessions()
   const chips = (sessions.data?.zt_sessions || {})[task.id] || []
   const profile = host.state.focusedSessionProfile?.get() || host.state.profile?.get() || 'default'
   const preferred = chips.find(s => (s.profile || 'default') === profile) || chips[0]
   const [choosing, setChoosing] = useState(false)
+  const [linking, setLinking] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [linked, setLinked] = useState(null)
+  const run = async fn => { if (busy) return; setBusy(true); try { await fn() } catch (error) { host.notify({ kind: 'error', message: error.message || String(error) }) } finally { setBusy(false) } }
+  const candidates = sessions.data?.candidates || []
   const [detailDir, setDetailDir] = useState(null)
   const details = task.repos.find(repo => repo.dir === detailDir)
   useEffect(() => {
@@ -835,6 +894,20 @@ function TaskCard({ task, activeZt, editorName = 'VS Code', expanded = true, onT
       ] }),
       summary.needs ? pill('需要处理', 'warn') : summary.done ? pill('已全部合并', 'good') : summary.known ? pill(summary.reviews.length ? summary.pending + ' 个待合并' : '无关联审阅', summary.reviews.length ? 'warn' : 'muted') : pill('合并进度未知'),
       jsxs('div', { className: 'db-task-actions', children: [
+        !preferred && !linked ? jsxs('span', { className: 'db-task-actions', children: [
+          jsx(Button, { variant: 'ghost', size: 'sm', disabled: busy || sessions.isLoading || sessions.isError || !sessions.data, onClick: () => setLinking(!linking), children: '关联已有会话' }),
+          jsx(Button, { variant: 'ghost', size: 'sm', disabled: busy || sessions.isLoading || sessions.isError || !sessions.data, onClick: () => run(() => createTaskSession(task, sessions.refetch)), children: '创建会话' })
+        ] }) : null,
+        linking && !preferred && !linked ? jsx(Select, { value: '', disabled: busy, onValueChange: value => run(async () => {
+          const selected = candidates.find(s => JSON.stringify([s.profile, s.id]) === value)
+          if (!selected) throw new Error('请选择列表中的会话')
+          const result = await rest('/task_session', { method: 'POST', body: { task: task.id, action: 'link', id: selected.id, profile: selected.profile } })
+          if (!result?.ok || !result.link) throw new Error(result?.detail || '保存会话关联失败')
+          setLinked(result.link); setLinking(false); await sessions.refetch?.()
+        }), children: [jsx(SelectTrigger, { children: jsx(SelectValue, { placeholder: candidates.length ? '选择已有会话' : '暂无可关联会话' }) }), jsx(SelectContent, { children: candidates.map(s => jsx(SelectItem, { value: JSON.stringify([s.profile, s.id]), children: s.profile + ' · ' + (s.title || s.id) }, JSON.stringify([s.profile, s.id]))) })] }) : null,
+        linked && !preferred ? jsx(Button, { variant: 'ghost', size: 'sm', onClick: () => openTaskSession(linked), children: '▷ 打开会话' }) : null,
+        preferred?.prompt_state === 'attempting' ? jsx('span', { className: 'db-meta', children: '分析提示已尝试发送，请在会话中确认' }) : null,
+        preferred?.prompt_state === 'pending' ? jsx(Button, { variant: 'ghost', size: 'sm', disabled: busy, onClick: () => run(() => createTaskSession(task, sessions.refetch)), children: '重试分析提示' }) : null,
         preferred ? jsx(Button, { variant: 'ghost', size: 'sm', title: '打开会话', 'aria-expanded': chips.length > 1 ? choosing : undefined, onClick: () => chips.length > 1 ? setChoosing(!choosing) : openTaskSession(preferred), children: '▷ 打开会话' }) : null,
           choosing && chips.length > 1 ? jsx(Select, { value: '', onValueChange: (value) => {
             const s = chips.find((s) => JSON.stringify([s.profile || 'default', s.id]) === value)
