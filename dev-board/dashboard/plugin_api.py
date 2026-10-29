@@ -699,9 +699,32 @@ def update_worktree(body: dict = Body(...)) -> dict:
         default = next((line.split("\t")[0].removeprefix("ref: refs/heads/") for line in advertised.splitlines() if line.startswith("ref: refs/heads/")), None)
         if not default or branch == default:
             raise HTTPException(409, "unknown or protected origin default branch")
-        remote = "refs/remotes/origin/" + branch
-        _checked_git(p, "rev-parse", "--verify", remote)
-        _checked_git(p, "merge-base", "--is-ancestor", head, remote)
+        contained = False
+        missing = []
+        for name in (branch, default):
+            remote = "refs/remotes/origin/" + name
+            try:
+                exists = subprocess.run(["git", "show-ref", "--verify", "--quiet", remote],
+                                        cwd=p, capture_output=True, text=True, timeout=60)
+                if exists.returncode == 1:
+                    missing.append("origin/" + name)
+                    continue
+                if exists.returncode != 0:
+                    raise HTTPException(409, "Git reference validation failed: " + remote)
+                result = subprocess.run(["git", "merge-base", "--is-ancestor", head, remote],
+                                        cwd=p, capture_output=True, text=True, timeout=60)
+                if result.returncode == 0:
+                    contained = True
+                    break
+                if result.returncode != 1:
+                    raise HTTPException(409, "Git ancestry validation failed: " + remote)
+            except (OSError, subprocess.TimeoutExpired):
+                raise HTTPException(409, "Git validation failed: " + remote)
+        if not contained:
+            detail = "HEAD is not fully contained in fetched origin/" + branch + " or origin/" + default
+            if missing:
+                detail += "; missing reference: " + ", ".join(missing)
+            raise HTTPException(409, detail)
         if _removal_identity(raw) != (p, branch, head) or _checked_git(p, "status", "--porcelain", "--untracked-files=all"):
             raise HTTPException(409, "worktree changed during validation")
         _checked_git(p.parent, "-C", str(p), "worktree", "remove", "--", str(p))

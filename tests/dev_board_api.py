@@ -407,18 +407,16 @@ class PluginApiTests(unittest.TestCase):
                 self.assertEqual([s["session_ids"] for s in mapping["7890"]], [["tip", "middle", "root"]])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class WorktreeRemovalTests(unittest.TestCase):
     setUp = PluginApiTests.setUp
     repo = PluginApiTests.repo
 
     def linked_repo(self):
         main = self.repo('main-9100')
+        self.git(main, 'branch', '-M', 'main')
         origin = self.root / 'origin.git'
         self.git(main, 'init', '--bare', str(origin))
+        self.git(self.root, '--git-dir=' + str(origin), 'symbolic-ref', 'HEAD', 'refs/heads/main')
         self.git(main, 'remote', 'add', 'origin', str(origin))
         self.git(main, 'push', '-u', 'origin', 'HEAD')
         linked = self.worktrees / 'service-9200'
@@ -485,15 +483,70 @@ class WorktreeRemovalTests(unittest.TestCase):
         self.git(d, 'checkout', '--detach')
         refused(identity=fresh)
 
-    def test_missing_remote_and_remote_branch_refuse(self):
+    def test_deleted_remote_branch_merged_into_default_can_be_removed(self):
+        main, d = self.linked_repo()
+        self.git(d, 'commit', '--allow-empty', '-m', 'feature')
+        self.git(d, 'push', 'origin', 'HEAD')
+        self.git(main, 'merge', '--ff-only', 'feat/remove')
+        self.git(main, 'push', 'origin', 'main')
+        self.git(d, 'push', 'origin', '--delete', 'feat/remove')
+        identity = self.mutation(d, 'preview').json()
+        response = self.mutation(d, 'remove', branch=identity['branch'], head=identity['head'])
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertFalse(d.exists())
+
+    def test_only_dev_reachable_and_missing_origin_refuse(self):
         _, d = self.linked_repo()
+        self.git(d, 'commit', '--allow-empty', '-m', 'only dev')
+        self.git(d, 'push', 'origin', 'HEAD:refs/heads/dev')
         identity = self.mutation(d, 'preview').json()
         self.git(d, 'push', 'origin', '--delete', 'feat/remove')
         response = self.mutation(d, 'remove', branch=identity['branch'], head=identity['head'])
         self.assertEqual(response.status_code, 409)
+        self.assertIn('missing reference: origin/feat/remove', response.json()['detail'])
+        self.assertTrue(d.exists())
         self.git(d, 'remote', 'remove', 'origin')
         response = self.mutation(d, 'remove', branch=identity['branch'], head=identity['head'])
         self.assertEqual(response.status_code, 409)
+        self.assertTrue(d.exists())
+
+    def test_unpushed_or_diverged_head_refuses(self):
+        _, d = self.linked_repo()
+        base = self.git(d, 'rev-parse', 'HEAD')
+        self.git(d, 'commit', '--allow-empty', '-m', 'remote change')
+        self.git(d, 'push', 'origin', 'HEAD')
+        self.git(d, 'reset', '--hard', base)
+        self.git(d, 'commit', '--allow-empty', '-m', 'local change')
+        identity = self.mutation(d, 'preview').json()
+        response = self.mutation(d, 'remove', branch=identity['branch'], head=identity['head'])
+        self.assertEqual(response.status_code, 409)
+        self.assertIn('not fully contained', response.json()['detail'])
+        self.assertTrue(d.exists())
+
+    def test_git_validation_errors_do_not_allow_default_fallback(self):
+        _, d = self.linked_repo()
+        identity = self.mutation(d, 'preview').json()
+        run = subprocess.run
+        for operation in ('show-ref', 'merge-base'):
+            with self.subTest(operation=operation):
+                def fail_validation(cmd, *args, **kwargs):
+                    if cmd[:2] == ['git', operation]:
+                        return subprocess.CompletedProcess(cmd, 128, '', 'validation error')
+                    return run(cmd, *args, **kwargs)
+                with patch.object(api.subprocess, 'run', side_effect=fail_validation):
+                    response = self.mutation(d, 'remove', branch=identity['branch'], head=identity['head'])
+                self.assertEqual(response.status_code, 409)
+                self.assertIn('validation failed', response.json()['detail'])
+                self.assertNotIn('missing reference', response.json()['detail'])
+                self.assertTrue(d.exists())
+
+    def test_fetch_failure_refuses_even_with_cached_safe_refs(self):
+        _, d = self.linked_repo()
+        identity = self.mutation(d, 'preview').json()
+        self.git(d, 'remote', 'set-url', 'origin', str(self.root / 'missing.git'))
+        response = self.mutation(d, 'remove', branch=identity['branch'], head=identity['head'])
+        self.assertEqual(response.status_code, 409)
+        self.assertIn('fetch', response.json()['detail'])
         self.assertTrue(d.exists())
 
     def test_protected_and_remote_default_branches_refuse(self):
@@ -555,3 +608,7 @@ class WorktreeRemovalTests(unittest.TestCase):
         identity = self.mutation(d, 'preview').json()
         self.assertEqual(self.mutation(d, 'remove', branch=identity['branch'], head=identity['head']).status_code, 409)
         self.assertTrue(d.exists())
+
+
+if __name__ == "__main__":
+    unittest.main()
