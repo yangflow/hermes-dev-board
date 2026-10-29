@@ -16,6 +16,14 @@ function taskPrefix(id, map = {}) {
 }
 
 const boardStyles = `
+.dev-board.db-page .db-card { border-radius:8px; }
+.dev-board.db-page .db-title strong { font-size:13px; font-weight:600; line-height:1.5; }
+.dev-board.db-page .db-ref { margin-right:8px; }
+.dev-board.db-page .db-card-head > .db-pill { background:transparent; font-size:11px; }
+.dev-board.db-page .db-task-actions button { font-size:12px; height:30px; }
+.dev-board.db-page .db-card-active { box-shadow:inset 2px 0 var(--ui-accent); }
+.dev-board.db-page .db-board-count { padding:4px 0 8px; border-bottom:1px solid var(--ui-stroke-secondary); }
+
 .dev-board .db-delete-option { display:flex; align-items:center; gap:8px; font-size:13px; line-height:20px; }
 .dev-board .db-delete-option input { margin:0; width:16px; height:16px; flex:0 0 16px; }
 
@@ -92,10 +100,10 @@ const boardStyles = `
 .dev-board .db-review-merged { color:var(--ui-green); background:color-mix(in srgb, var(--ui-green) 12%, transparent); }
 .dev-board .db-review-open { color:var(--ui-accent); background:color-mix(in srgb, var(--ui-accent) 12%, transparent); }
 .dev-board.db-page { container-type:inline-size; }
-.dev-board.db-page .db-board-content { display:flex; flex-direction:column; gap:16px; padding:28px; min-width:0; max-width:1440px; margin:auto; }
+.dev-board.db-page .db-board-content { display:flex; flex-direction:column; gap:12px; padding:20px; min-width:0; max-width:1440px; margin:auto; }
 .dev-board.db-page .db-page-header { display:flex; align-items:center; justify-content:space-between; gap:16px; }
 .dev-board.db-page .db-eyebrow { color:var(--ui-accent); letter-spacing:.14em; font-size:10px; font-weight:600; }
-.dev-board.db-page .db-page-header h1 { margin:8px 0; font-size:26px; font-weight:650; }
+.dev-board.db-page .db-page-header h1 { margin:0 0 6px; font-size:20px; font-weight:650; }
 .dev-board.db-page .db-page-header p { margin:0; color:var(--ui-text-secondary); }
 .dev-board.db-page .db-board-toolbar { padding:4px 0; gap:10px; }
 .dev-board.db-page .db-search { flex:1 1 220px; }
@@ -106,16 +114,16 @@ const boardStyles = `
 .dev-board.db-page .db-board-count .db-accent { color:var(--ui-accent); }
 .dev-board.db-page .db-card { background:transparent; }
 .dev-board.db-page .db-card-active { border-color:var(--ui-accent); }
-.dev-board.db-page .db-card-head { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:18px; }
+.dev-board.db-page .db-card-head { display:flex; align-items:center; flex-wrap:wrap; gap:10px; padding:12px 14px; }
 .dev-board.db-page .db-task-toggle { display:flex; align-items:center; gap:10px; flex:1 1 240px; min-width:0; padding:0; text-align:left; border:0; background:transparent; color:inherit; }
-.dev-board.db-page .db-task-heading { display:flex; flex-direction:column; flex:1 1 auto; width:100%; gap:6px; min-width:0; }
+.dev-board.db-page .db-task-heading { display:flex; flex-direction:column; flex:1 1 auto; width:100%; gap:4px; min-width:0; }
 .dev-board.db-page .db-title { display:block; flex:0 0 auto; width:100%; min-height:1.5em; }
-.dev-board.db-page .db-ref { display:inline-block; padding:2px 5px; border:1px solid var(--ui-stroke-secondary); border-radius:var(--radius-sm); font:11px monospace; color:var(--ui-text-secondary); }
-.dev-board.db-page .db-progress { display:block; width:100px; height:3px; background:var(--ui-stroke-secondary); border-radius:var(--radius-sm); overflow:hidden; }
+.dev-board.db-page .db-ref { display:inline-block; padding:0; border:0; border-radius:0; font:11px monospace; color:var(--ui-text-secondary); }
+.dev-board.db-page .db-progress { display:block; width:64px; height:2px; background:var(--ui-stroke-secondary); border-radius:var(--radius-sm); overflow:hidden; }
 .dev-board.db-page .db-progress > span { display:block; height:100%; background:var(--ui-accent); }
 .dev-board.db-page .db-task-actions { display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
-.dev-board.db-page .db-task-actions > button:first-child { color:var(--ui-accent); }
-.dev-board.db-page .db-pill { display:inline-block; border-radius:var(--radius-md); padding:3px 7px; margin:2px 0; font-size:11px; white-space:nowrap; color:var(--ui-text-tertiary); background:color-mix(in srgb,var(--ui-text-tertiary) 10%,transparent); }
+.dev-board.db-page .db-task-actions > button:first-child { color:var(--ui-text-secondary); }
+.dev-board.db-page .db-pill { display:inline-block; border-radius:var(--radius-md); padding:2px 6px; margin:0; font-size:11px; white-space:nowrap; color:var(--ui-text-tertiary); background:color-mix(in srgb,var(--ui-text-tertiary) 10%,transparent); }
 .dev-board.db-page .db-pill-good { color:var(--ui-green); background:color-mix(in srgb,var(--ui-green) 10%,transparent); }
 .dev-board.db-page .db-pill-warn, .dev-board.db-page .db-dirty { color:var(--ui-warning, var(--ui-accent)); }
 .dev-board.db-page .db-pill-warn { background:color-mix(in srgb,var(--ui-accent) 10%,transparent); }
@@ -1017,10 +1025,11 @@ function BoardPage() {
     ...repos.map(repo => jsx(BoardReviewObserver, { repo, onData }, repo.dir)),
     jsxs('div', { className: 'db-board-content', children: [
       jsxs('header', { className: 'db-page-header', children: [
-        jsxs('div', { children: [jsx('div', { className: 'db-eyebrow', children: 'WORKSPACE / DEV BOARD' }), jsx('h1', { children: '跨仓任务工作区' }), jsx('p', { children: '集中查看任务、关联仓库与合并进度。' })] }),
-        jsx(RestoreWorktrees, { repos: board.data?.hidden_repos || [], refresh: board.refetch }), jsx(Button, { variant: 'secondary', size: 'sm', onClick: () => openDock(sessions.data?.zt_sessions || {}), children: '在会话右侧打开' })
+        jsxs('div', { children: [jsx('h1', { children: '跨仓任务工作区' }), jsx('p', { children: '集中查看任务、关联仓库与合并进度。' })] }),
+        jsx(Button, { variant: 'secondary', size: 'sm', onClick: () => openDock(sessions.data?.zt_sessions || {}), children: '在会话右侧打开' })
       ] }),
       jsxs('div', { className: 'db-toolbar db-board-toolbar', children: [
+        jsx(RestoreWorktrees, { repos: board.data?.hidden_repos || [], refresh: board.refetch }),
         jsx('input', { type: 'search', className: 'db-search', 'aria-label': '搜索任务', placeholder: '搜索任务、仓库或 PR/MR…', value: search, onChange: e => setSearch(e.target.value) }),
         jsx('select', { 'aria-label': '审阅状态', value: status, onChange: e => setStatus(e.target.value), children: [['all', '全部审阅状态'], ['pending', '待处理'], ['done', '已全部合并']].map(([value, label]) => jsx('option', { value, children: label }, value)) }),
         jsx(Button, { variant: 'ghost', size: 'sm', 'aria-pressed': collapsed === true, onClick: () => { setCollapsed(collapsed !== true); setOverrides({}) }, children: collapsed === true ? '全部展开' : '全部折叠' }),
