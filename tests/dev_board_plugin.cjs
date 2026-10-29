@@ -74,7 +74,7 @@ function harness() {
     window: { addEventListener(name) { windowEvents.push(name) }, removeEventListener() {} },
     ROUTES_AREA: 'routes', SIDEBAR_NAV_AREA: 'nav', PALETTE_AREA: 'palette',
     ...Object.fromEntries(['Badge', 'Button', 'EmptyState', 'ScrollArea', 'Select', 'SelectContent', 'SelectItem',
-      'SelectTrigger', 'SelectValue', 'StatusDot', 'Codicon', 'Dialog', 'DialogContent', 'DialogDescription', 'DialogFooter', 'DialogHeader', 'DialogTitle'].map((name) => [name, name]))
+      'SelectTrigger', 'SelectValue', 'StatusDot', 'Codicon', 'Dialog', 'DialogContent', 'DialogDescription', 'DialogFooter', 'DialogHeader', 'DialogTitle', 'DropdownMenu', 'DropdownMenuTrigger', 'DropdownMenuContent', 'DropdownMenuItem'].map((name) => [name, name]))
   })
   const source = fs.readFileSync(path.join(__dirname, '../dev-board/desktop/plugin.js'), 'utf8')
     .replace(/^import .*\n/gm, '').replace('export default {', 'globalThis.plugin = {')
@@ -1129,9 +1129,9 @@ test('explicit picker uses candidate identity, persists owner, opens and follows
   assert.ok(nodes(render()).some(n => n.type === 'Dialog'))
   const search = nodes(render()).find(n => n.props['aria-label'] === '搜索会话')
   search.props.onChange({ target: { value: 'default' } })
-  assert.ok(!nodes(render()).some(n => n.type === 'Button' && text(n) === 'no task id · dev · same'))
+  assert.ok(!nodes(render()).some(n => n.type === 'Button' && text(n) === 'no task id'))
   nodes(render()).find(n => n.props['aria-label'] === '搜索会话').props.onChange({ target: { value: 'same' } })
-  await button(render(), 'no task id · dev · same')()
+  await button(render(), 'no task id')()
   assert.equal(nodes(render()).find(n => n.type === 'Button' && text(n) === '确认关联').props.disabled, false)
   await button(render(), '确认关联')()
   assert.ok(!nodes(render()).some(n => n.type === 'Button' && text(n).includes('创建会话')))
@@ -1233,7 +1233,7 @@ test('session dialog cancel writes nothing, resets explicit selection and return
   let focused = false
   await button(render(), '关联已有会话')({ currentTarget: { focus() { focused = true } } })
   assert.equal(nodes(render()).find(n => n.type === 'Button' && text(n) === '确认关联').props.disabled, true)
-  await button(render(), 'A · dev · a')()
+  await button(render(), 'A')()
   const content = nodes(render()).find(n => n.type === 'DialogContent')
   await button(render(), '取消')()
   content.props.onCloseAutoFocus({ preventDefault() {} })
@@ -1248,15 +1248,15 @@ test('worktree removal defaults to hide, delete requires exact identity second c
   const repo = { dir: '/allowed/repo-1234', branch: 'feat/task', head: 'abcdef' }
   h.rest = async (url, options) => { writes.push(plain(options.body)); return options.body.action === 'preview' ? repo : { ok: true } }
   const render = () => h.render(h.api.WorktreeActions, { repo })
-  await button(render(), '移除 Worktree')()
+  nodes(render()).find(n => n.type === 'DropdownMenuItem').props.onSelect()
   assert.equal(nodes(render()).find(n => n.props.type === 'checkbox').props.checked, false)
   assert.match(text(render()), /隐藏不会阻止 cron/)
   await button(render(), '取消')()
   assert.equal(writes.length, 0)
-  await button(render(), '移除 Worktree')()
+  nodes(render()).find(n => n.type === 'DropdownMenuItem').props.onSelect()
   await button(render(), '确认隐藏')()
   assert.equal(writes[0].action, 'hide')
-  await button(render(), '移除 Worktree')()
+  nodes(render()).find(n => n.type === 'DropdownMenuItem').props.onSelect()
   nodes(render()).find(n => n.props.type === 'checkbox').props.onChange({ target: { checked: true } })
   await button(render(), '下一步')()
   assert.equal(writes.at(-1).action, 'preview')

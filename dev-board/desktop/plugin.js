@@ -6,7 +6,7 @@
 import { cn, host, useQuery, ROUTES_AREA, SIDEBAR_NAV_AREA, PALETTE_AREA } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Badge, Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, EmptyState, ScrollArea, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, StatusDot, Codicon } from '@hermes/plugin-sdk'
+import { Badge, Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, EmptyState, ScrollArea, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, StatusDot, Codicon, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@hermes/plugin-sdk'
 
 
 function taskPrefix(id, map = {}) {
@@ -16,6 +16,12 @@ function taskPrefix(id, map = {}) {
 }
 
 const boardStyles = `
+.dev-board .db-session-search { width:100%; margin-bottom:10px; }
+.dev-board .db-session-option { width:100%; justify-content:flex-start; padding:10px 12px; border-radius:6px; flex-shrink:0; }
+.dev-board .db-session-option[aria-pressed=true] { background:var(--ui-row-active-background); box-shadow:inset 2px 0 var(--ui-accent); }
+.dev-board .db-session-copy { display:flex; flex-direction:column; gap:4px; min-width:0; width:100%; text-align:left; }
+.dev-board .db-session-title { font-size:13px; font-weight:500; white-space:normal; overflow-wrap:anywhere; }
+
 .dev-board { --db-control-height:36px; min-width:0; width:100%; max-width:100%; box-sizing:border-box; color:var(--ui-text-primary); font-size:12px; }
 .dev-board *, .dev-board *::before, .dev-board *::after { box-sizing:border-box; }
 .dev-board button, .dev-board input { max-width:100%; font:inherit; }
@@ -910,13 +916,13 @@ function TaskCard({ task, activeZt, editorName = 'VS Code', expanded = true, onT
           jsx(Button, { variant: 'ghost', size: 'sm', disabled: busy || sessions.isLoading || sessions.isError || !sessions.data, onClick: () => run(() => createTaskSession(task, sessions.refetch)), children: '创建会话' })
         ] }) : null,
         linking && !preferred && !linked ? workspaceDialog({ open: true, onOpenChange: setLinking, returnFocus: linkTrigger,
-          title: '关联已有会话', description: '搜索并选择准确的 profile / session ID，然后确认。取消不会保存。',
+          title: '关联已有会话', description: '搜索标题、Profile 或会话 ID，选择后确认。',
           children: jsxs('div', { children: [
-            jsx('input', { autoFocus: true, type: 'search', className: 'db-search', 'aria-label': '搜索会话', value: sessionSearch, onChange: event => setSessionSearch(event.target.value) }),
+            jsx('input', { autoFocus: true, type: 'search', className: 'db-search db-session-search', placeholder: '搜索会话标题、Profile 或 ID…', 'aria-label': '搜索会话', value: sessionSearch, onChange: event => setSessionSearch(event.target.value) }),
             jsx('div', { className: 'db-candidates', children: candidates.filter(s => [s.title, s.id, s.profile].join(' ').toLowerCase().includes(sessionSearch.toLowerCase())).map(s => jsx(Button, {
               variant: candidate === JSON.stringify([s.profile, s.id]) ? 'secondary' : 'ghost',
               'aria-pressed': candidate === JSON.stringify([s.profile, s.id]), onClick: () => setCandidate(JSON.stringify([s.profile, s.id])),
-              children: (s.title || '无标题') + ' · ' + s.profile + ' · ' + s.id
+              className: 'db-session-option', children: jsx('span', { className: 'db-session-title', children: s.title || '无标题' })
             }, JSON.stringify([s.profile, s.id]))) })
           ] }),
           footer: jsxs('div', { children: [jsx(Button, { variant: 'secondary', onClick: () => setLinking(false), children: '取消' }), jsx(Button, {
@@ -1073,8 +1079,8 @@ function WorktreeActions({ repo }) {
     } catch (error) { host.notify({ kind: 'error', message: error.message || String(error) }) }
     finally { setBusy(false) }
   }
-  return jsxs('span', { children: [jsx(Button, { variant: 'ghost', size: 'sm', onClick: event => { trigger.current = event?.currentTarget; setDeleteDirectory(false); setIdentity(null); setOpen(true) }, children: '移除 Worktree' }),
-    open ? workspaceDialog({ open, onOpenChange: setOpen, returnFocus: trigger, title: identity ? '再次确认删除目录' : '移除 Worktree',
+  return jsxs('span', { children: [jsxs(DropdownMenu, { children: [jsx(DropdownMenuTrigger, { asChild: true, children: jsx(Button, { variant: 'ghost', size: 'sm', ref: trigger, 'aria-label': '更多仓库操作', children: jsx(Codicon, { name: 'ellipsis', size: 14 }) }) }), jsx(DropdownMenuContent, { align: 'end', onCloseAutoFocus: event => event.preventDefault(), children: jsx(DropdownMenuItem, { onSelect: () => { setDeleteDirectory(false); setIdentity(null); setOpen(true) }, children: '删除 Worktree' }) })] }),
+    open ? workspaceDialog({ open, onOpenChange: setOpen, returnFocus: trigger, title: identity ? '再次确认删除目录' : '删除 Worktree',
       description: '默认只持久隐藏，可恢复。隐藏不会阻止 cron 自动清理。',
       children: identity ? jsxs('div', { children: [jsx('p', { className: 'db-dialog-path', children: identity.dir }), jsx('p', { className: 'db-dialog-path', children: identity.branch }), jsx('p', { className: 'db-dialog-path', children: identity.head })] }) : jsx('label', { children: [jsx('input', { type: 'checkbox', checked: deleteDirectory, onChange: event => setDeleteDirectory(event.target.checked) }), '同时删除本地目录（需要再次确认）'] }),
       footer: jsxs('div', { children: [jsx(Button, { variant: 'secondary', onClick: () => setOpen(false), children: '取消' }), jsx(Button, { disabled: busy, onClick: submit, children: identity ? '确认删除目录' : deleteDirectory ? '下一步' : '确认隐藏' })] })
