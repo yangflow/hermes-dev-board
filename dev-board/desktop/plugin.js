@@ -16,6 +16,9 @@ function taskPrefix(id, map = {}) {
 }
 
 const boardStyles = `
+.dev-board .db-delete-option { display:flex; align-items:center; gap:8px; font-size:13px; line-height:20px; }
+.dev-board .db-delete-option input { margin:0; width:16px; height:16px; flex:0 0 16px; }
+
 .dev-board .db-repo-actions { display:flex; align-items:center; justify-content:flex-end; gap:4px; }
 .dev-board .db-repo-actions button { width:28px; height:28px; padding:0; }
 .dev-board .db-review-details { display:flex; flex-direction:column; gap:6px; min-width:0; }
@@ -1088,8 +1091,8 @@ function WorktreeActions({ repo }) {
   }
   return jsxs('span', { children: [jsx(Button, { variant: 'ghost', size: 'sm', ref: trigger, 'aria-label': '删除 Worktree', title: '删除 Worktree', onClick: () => { setDeleteDirectory(false); setIdentity(null); setOpen(true) }, children: jsx(Codicon, { name: 'trash', size: 14 }) }),
     open ? workspaceDialog({ open, onOpenChange: setOpen, returnFocus: trigger, title: identity ? '再次确认删除目录' : '删除 Worktree',
-      description: '默认只持久隐藏，可恢复。隐藏不会阻止 cron 自动清理。',
-      children: identity ? jsxs('div', { children: [jsx('p', { className: 'db-dialog-path', children: identity.dir }), jsx('p', { className: 'db-dialog-path', children: identity.branch }), jsx('p', { className: 'db-dialog-path', children: identity.head })] }) : jsx('label', { children: [jsx('input', { type: 'checkbox', checked: deleteDirectory, onChange: event => setDeleteDirectory(event.target.checked) }), '同时删除本地目录（需要再次确认）'] }),
+      description: identity ? '将删除以下本地 Worktree 目录，保留本地分支。此操作不可恢复。' : '默认只持久隐藏，可恢复。隐藏不会阻止 cron 自动清理。',
+      children: identity ? jsxs('div', { children: [jsx('p', { className: 'db-dialog-path', children: identity.dir }), jsx('p', { className: 'db-dialog-path', children: identity.branch }), jsx('p', { className: 'db-dialog-path', children: identity.head })] }) : jsx('label', { className: 'db-delete-option', children: [jsx('input', { type: 'checkbox', checked: deleteDirectory, onChange: event => setDeleteDirectory(event.target.checked) }), '同时删除本地目录（需要再次确认）'] }),
       footer: jsxs('div', { children: [jsx(Button, { variant: 'secondary', onClick: () => setOpen(false), children: '取消' }), jsx(Button, { disabled: busy, onClick: submit, children: identity ? '确认删除目录' : deleteDirectory ? '下一步' : '确认隐藏' })] })
     }) : null] })
 }
