@@ -41,7 +41,7 @@ const boardStyles = `
 .dev-board input { min-width:0; flex:1; padding:5px 6px; border:1px solid var(--ui-stroke-secondary); border-radius:var(--radius-sm); color:var(--ui-text-primary); background:transparent; }
 .dev-board .db-section { margin:10px 4px 4px; padding:6px 0; border-bottom:1px solid var(--ui-stroke-secondary); color:var(--ui-text-secondary); font-size:12px; font-weight:600; }
 .dev-board .db-tree { display:flex; align-items:center; gap:4px; width:100%; min-width:0; border:0; background:transparent; color:inherit; text-align:left; padding-top:4px; padding-bottom:4px; }
-.dev-board .db-tree:hover { background:var(--chrome-action-hover); }
+.dev-board .db-tree.db-picked, .dev-board .db-tree:hover { background:var(--chrome-action-hover); }
 .dev-board .db-tree > span:nth-child(2) { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .dev-board .db-tree > span:last-child { flex-shrink:0; }
 .dev-board .db-dock-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:6px; min-width:0; padding:8px; border-bottom:1px solid var(--ui-stroke-secondary); }
@@ -176,6 +176,52 @@ const boardStyles = `
   .dev-board.db-page .db-row-action { text-align:left; }
 }
 
+
+.dev-board.db-dock { display:flex; flex-direction:column; height:100%; min-height:0; }
+.dev-board.db-dock > .db-dock-body { display:flex; flex:1; flex-direction:column; min-height:0; }
+.dev-board.db-dock .db-task-selector { flex-shrink:0; }
+.dev-board.db-dock .db-dock-context { flex-shrink:0; padding:10px 12px; }
+.dev-board.db-dock .db-context-title { font-size:14px; margin:4px 0; }
+.dev-board .db-workspace { display:flex; flex:1; min-height:0; min-width:0; overflow:hidden; }
+.dev-board .db-files-pane { display:flex; flex-direction:column; width:300px; flex-shrink:0; min-height:0; border-right:1px solid var(--ui-stroke-secondary); }
+.dev-board .db-file-search { padding:0 12px 10px; }
+.dev-board .db-file-search input { width:100%; }
+.dev-board .db-file-scroll { flex:1; min-height:0; overflow:auto; }
+.dev-board .db-diff-pane { display:flex; flex-direction:column; flex:1; min-width:0; min-height:0; overflow:hidden; }
+.dev-board .db-diff-heading, .dev-board .db-diff-tools { display:flex; align-items:center; flex-wrap:wrap; gap:6px; padding:8px; border-bottom:1px solid var(--ui-stroke-secondary); flex-shrink:0; }
+.dev-board .db-diff-heading strong { flex:1; min-width:80px; overflow-wrap:anywhere; }
+.dev-board .db-diff-back { display:none; }
+.dev-board .db-diff-tools label { margin-left:auto; display:flex; align-items:center; }
+.dev-board .db-diff-tools input { flex:none; }
+.dev-board .db-diff-tools button[aria-pressed="true"] { background:var(--chrome-action-hover); color:var(--ui-accent); }
+.dev-board .db-code-scroll { flex:1; min-height:0; overflow:auto; font:11px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace; }
+.dev-board .db-raw-diff { margin:0; padding:12px; white-space:pre-wrap; overflow-wrap:anywhere; }
+.dev-board .db-unified { min-width:max-content; }
+.dev-board .db-split { min-width:720px; }
+.dev-board .db-split-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+.dev-board .db-split-row > :last-child { border-left:1px solid var(--ui-stroke-secondary); }
+.dev-board .db-code-line { display:flex; min-width:0; min-height:1.7em; white-space:pre; }
+.dev-board .db-line-no { width:45px; flex-shrink:0; padding-right:8px; text-align:right; user-select:none; color:var(--ui-text-tertiary); }
+.dev-board .db-line-sign { width:18px; flex-shrink:0; user-select:none; }
+.dev-board .db-source { padding-right:10px; }
+.dev-board .db-code-add { background:color-mix(in srgb,var(--ui-green) 12%,transparent); }
+.dev-board .db-code-del { background:color-mix(in srgb,var(--ui-red) 12%,transparent); }
+.dev-board .db-hunk { padding:4px 8px; white-space:pre-wrap; color:var(--ui-accent); background:var(--chrome-action-hover); }
+.dev-board .db-wrap .db-unified, .dev-board .db-wrap .db-split { min-width:0; }
+.dev-board .db-wrap .db-source { white-space:pre-wrap; overflow-wrap:anywhere; min-width:0; }
+.dev-board .db-code-scroll:not(.db-wrap) .db-split { width:max-content; min-width:100%; }
+.dev-board .db-code-scroll:not(.db-wrap) .db-split-row { grid-template-columns:minmax(350px,1fr) minmax(350px,1fr); }
+.dev-board .db-list-only .db-files-pane { width:100%; border:0; }
+.dev-board .db-list-only .db-diff-pane { display:none; }
+.dev-board.db-dialog:has(.db-expanded-diff) { width:92vw; max-width:92vw; }
+.dev-board .db-expanded-diff { display:flex; height:70vh; min-height:0; }
+@container (max-width:650px) {
+  .dev-board .db-workspace .db-files-pane { width:100%; border:0; }
+  .dev-board .db-workspace .db-diff-pane { display:none; }
+  .dev-board .db-workspace.db-has-selection:not(.db-list-only) .db-files-pane { display:none; }
+  .dev-board .db-workspace.db-has-selection:not(.db-list-only) .db-diff-pane { display:flex; }
+  .dev-board .db-diff-back { display:inline-flex; }
+}
 
 `
 const boardStyle = () => jsx('style', { children: boardStyles })
@@ -457,7 +503,8 @@ function TreeRow({ row, expanded, onToggle, onPick, pickedKey }) {
   const stColor = st === '?' ? 'var(--ui-text-tertiary)' : st === 'D' ? 'var(--ui-red)' : st === 'A' ? 'var(--ui-green)' : 'var(--ui-text-secondary)'
   return jsxs('button', {
     type: 'button', title: row.path || row.name,
-    className: 'db-tree ' + common + (pickedKey === row.key ? ' bg-(--chrome-action-hover)' : ''),
+    'aria-pressed': pickedKey === row.key,
+    className: 'db-tree ' + common + (pickedKey === row.key ? ' db-picked' : ''),
     style: { paddingLeft: 4 + row.depth * 12 + 14 },
     onClick: onPick,
     children: [
@@ -474,7 +521,7 @@ function TreeRow({ row, expanded, onToggle, onPick, pickedKey }) {
 // Side-by-side rows from a unified diff: aligned old/new sequences per hunk.
 function buildSideBySide(text) {
   const rows = []
-  let oldNo = 0, newNo = 0, oldBuf = [], newBuf = []
+  let oldNo = 0, newNo = 0, inHunk = false, oldBuf = [], newBuf = []
   const flush = () => {
     const n = Math.max(oldBuf.length, newBuf.length)
     for (let i = 0; i < n; i++) {
@@ -486,11 +533,13 @@ function buildSideBySide(text) {
     if (l.startsWith('@@')) {
       flush()
       const m = /@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(l)
-      if (m) { oldNo = +m[1]; newNo = +m[2] }
+      if (m) { oldNo = +m[1]; newNo = +m[2]; inHunk = true }
       rows.push({ hunk: l })
       continue
     }
-    if (l.startsWith('diff --git') || l.startsWith('index ') || l.startsWith('--- ') || l.startsWith('+++ ') || l.startsWith('new file')) continue
+    if (l.startsWith('diff --git')) { flush(); inHunk = false }
+    if (inHunk && l.startsWith('\\ No newline')) { flush(); rows.push({ note: l }); continue }
+    if (!inHunk || ![' ', '+', '-'].includes(l[0])) continue
     if (l.startsWith('-')) oldBuf.push({ no: oldNo++, text: l.slice(1) })
     else if (l.startsWith('+')) newBuf.push({ no: newNo++, text: l.slice(1) })
     else { flush(); rows.push({ o: { no: oldNo++, text: l.slice(1) }, n: { no: newNo++, text: l.slice(1) }, kind: 'ctx' }) }
@@ -499,39 +548,32 @@ function buildSideBySide(text) {
   return rows
 }
 
-function FileCompare({ dir, file, diff }) {
+function FileCompare({ diff, mode = 'split', wrap = true }) {
   const rows = buildSideBySide(diff)
-  const cell = (side, row) => {
-    const line = row ? row[side] : null
-    const kind = row && !row.hunk ? row.kind : null
-    let bg = 'transparent', color = 'var(--ui-text-secondary)'
-    if (kind === 'ctx') { /* default */ }
-    else if (kind === 'add') { if (side === 'n') { bg = 'color-mix(in srgb, var(--ui-green) 14%, transparent)'; color = 'var(--ui-green)' } }
-    else if (kind === 'del') { if (side === 'o') { bg = 'color-mix(in srgb, var(--ui-red) 14%, transparent)'; color = 'var(--ui-red)' } }
-    else if (kind === 'mod') { if (side === 'n') { bg = 'color-mix(in srgb, var(--ui-green) 14%, transparent)' } else { bg = 'color-mix(in srgb, var(--ui-red) 14%, transparent)' } }
-    return jsxs('div', {
-      className: 'flex font-mono text-[0.6875rem] leading-[1.15rem] min-w-0',
-      style: { background: line ? bg : 'color-mix(in srgb, var(--ui-text-tertiary) 6%, transparent)' },
-      children: [
-        jsx('span', { className: 'w-9 shrink-0 text-right pr-1.5 select-none text-(--ui-text-tertiary) tabular-nums', children: line ? line.no : '' }),
-        jsx('span', { className: 'flex-1 whitespace-pre-wrap break-all px-1', style: { color }, children: line ? line.text : '' })
-      ]
-    })
+  if (!rows.length) return jsx('pre', { className: 'db-code-scroll db-raw-diff', children: diff })
+  const line = (value, kind, side, key, numbers) => jsxs('div', { className: 'db-code-line db-code-' + (value ? kind : 'ctx'), children: [
+    ...(numbers ? numbers.map(no => jsx('span', { className: 'db-line-no', children: no })) : [jsx('span', { className: 'db-line-no', children: value?.no })]),
+    jsx('span', { className: 'db-line-sign', children: !value || kind === 'ctx' ? ' ' : side === 'o' ? '−' : '+' }),
+    jsx('span', { className: 'db-source', children: value?.text || ' ' })
+  ] }, key)
+  const hunk = (row, key) => jsx('div', { className: 'db-hunk', children: row.hunk }, key)
+  const unified = []
+  let changes = []
+  const flush = () => {
+    for (const side of ['o', 'n']) for (const row of changes) if (row[side]) unified.push(line(row[side], side === 'o' ? 'del' : 'add', side, unified.length, [side === 'o' ? row.o.no : undefined, side === 'n' ? row.n.no : undefined]))
+    changes = []
   }
-  return jsxs('div', { className: 'h-full flex flex-col min-h-0', children: [
-    jsxs('div', { className: 'flex items-center gap-2 px-2 py-1 border-b border-(--ui-stroke-secondary)', children: [
-      jsx(Button, { variant: 'ghost', size: 'sm', onClick: () => window.dispatchEvent(new CustomEvent('dev-board-back')), children: '← 返回' }),
-      jsx('span', { className: 'text-xs truncate', children: file })
-    ]}),
-    jsxs('div', { className: 'flex-1 min-h-0 flex text-[0] ', children: [
-      jsx(ScrollArea, { className: 'flex-1 min-w-0 border-r border-(--ui-stroke-secondary) h-full', children: jsx('div', { children: rows.map((r, i) => r.hunk
-        ? jsx('div', { className: 'px-2 py-0.5 text-[0.625rem] font-mono', style: { color: 'var(--ui-accent)', background: 'color-mix(in srgb, var(--ui-accent) 10%, transparent)' }, children: r.hunk }, i)
-        : cell('o', r)) }) }),
-      jsx(ScrollArea, { className: 'flex-1 min-w-0 h-full', children: jsx('div', { children: rows.map((r, i) => r.hunk
-        ? jsx('div', { className: 'px-2 py-0.5 text-[0.625rem] font-mono', style: { color: 'var(--ui-accent)', background: 'color-mix(in srgb, var(--ui-accent) 10%, transparent)' }, children: r.hunk.replace(/@@(.*)@@/, '@@') }, i)
-        : cell('n', r)) }) })
-    ]})
-  ]})
+  for (const row of rows) {
+    if (!row.hunk && !row.note && row.kind !== 'ctx') { changes.push(row); continue }
+    flush()
+    unified.push(row.note ? jsx('div', { className: 'db-hunk', children: row.note }, unified.length) : row.hunk ? hunk(row, unified.length) : line(row.n, 'ctx', 'n', unified.length, [row.o.no, row.n.no]))
+  }
+  flush()
+  return jsx('div', { className: 'db-code-scroll' + (wrap ? ' db-wrap' : ''), children: mode === 'unified'
+    ? jsx('div', { className: 'db-unified', children: unified })
+    : jsx('div', { className: 'db-split', children: rows.map((row, i) => row.note ? jsx('div', { className: 'db-hunk', children: row.note }, i) : row.hunk
+      ? hunk(row, i)
+      : jsxs('div', { className: 'db-split-row', children: [line(row.o, row.kind === 'ctx' ? 'ctx' : 'del', 'o'), line(row.n, row.kind === 'ctx' ? 'ctx' : 'add', 'n')] }, i)) }) })
 }
 
 function taskIdentity(id, map = {}) {
@@ -580,6 +622,14 @@ function DockPanel() {
   const [repoFilter, setRepoFilter] = useState('all')
   const [expanded, setExpanded] = useState(() => new Set())
   const [picked, setPicked] = useState(null) // {dir, path, repo}
+  const [search, setSearch] = useState('')
+  const [collapsedRepos, setCollapsedRepos] = useState(() => new Set())
+  const [listOnly, setListOnly] = useState(false)
+  const [mode, setMode] = useState('unified')
+  const [wrap, setWrap] = useState(false)
+  const [enlarged, setEnlarged] = useState(false)
+  const expandTrigger = useRef(null)
+  const workspaceRef = useRef(null)
   const task = (board.data?.tasks || []).find((t) => t.id === activeZt)
   const tc = useQuery({
     queryKey: ['dev-board-task-changes', activeZt],
@@ -587,12 +637,7 @@ function DockPanel() {
     enabled: !!activeZt
   })
   const fileDiff = useDiff(picked?.dir, picked?.path)
-  useEffect(() => { setExpanded(new Set()); setPicked(null); setRepoFilter('all') }, [activeZt])
-  useEffect(() => {
-    const back = () => setPicked(null)
-    window.addEventListener('dev-board-back', back)
-    return () => window.removeEventListener('dev-board-back', back)
-  }, [])
+  useEffect(() => { setExpanded(new Set()); setPicked(null); setRepoFilter('all'); setSearch(''); setCollapsedRepos(new Set()); setEnlarged(false) }, [activeZt])
   const [help, setHelp] = useState(false)
   const helpTrigger = useRef(null)
   const [reviewData, setReviewData] = useState({})
@@ -613,6 +658,7 @@ function DockPanel() {
     jsxs('header', { className: 'db-dock-header', children: [
       jsx('span', { className: 'db-worktree-icon', 'aria-hidden': true, children: jsx(Codicon, { name: 'git-branch', size: 16 }) }),
       jsx('strong', { children: 'WORKTREE' }),
+      jsx(Button, { variant: 'ghost', size: 'sm', 'aria-label': '仅文件列表', 'aria-pressed': listOnly, onClick: () => setListOnly(!listOnly), children: '▥' }),
       jsx(Button, { variant: 'ghost', size: 'sm', className: 'db-help', 'aria-label': '查看 Worktree 使用说明', ref: helpTrigger, onClick: () => setHelp(true), children: 'ⓘ' })
     ] }),
     taskSelector,
@@ -623,14 +669,19 @@ function DockPanel() {
     ] }) }) : null,
     content
   ] })
-  const state = (title, description) => panel(jsx(EmptyState, { title, description }))
+  const taskContext = count => jsxs('section', { className: 'db-dock-context', children: [
+    jsx('div', { className: 'db-context-label', children: (selectedTask === 'auto' ? '跟随会话' : '当前选中') + ' · ' + taskPrefix(task.id, sessions.data?.zt_sessions) }),
+    jsx('h2', { className: 'db-context-title', title: taskTitle, children: taskTitle }),
+    jsx('div', { className: 'db-meta', children: count + ' 个关联仓库' })
+  ] })
+  const state = (title, description) => panel(jsxs('div', { className: 'db-dock-body', children: [task ? taskContext(task.repos.length) : null, jsx(EmptyState, { title, description })] }))
   if (board.isLoading || (selectedTask === 'auto' && sessions.isLoading)) return state('加载任务和会话…')
   if (board.isError) return state('任务加载失败', board.error?.message)
   if (staleBackend(board.data)) return panel(staleNotice())
   if (selectedTask === 'auto' && sessions.isError) return state('会话映射加载失败', (sessions.error?.message || '') + '；可手动选择任务')
   if (!activeZt) return state('当前会话未匹配任务', '请从上方手动选择任务，或打开含任务编号的会话')
   if (!task) return state(taskPrefix(activeZt, sessions.data?.zt_sessions) + ' 无活跃 worktree', '可从上方选择其他任务')
-  if (tc.isLoading) return state('加载任务变更…')
+  if (tc.isLoading || (!tc.data && !tc.isError)) return state('加载任务变更…')
   if (tc.isError) return state('任务变更加载失败', tc.error?.message)
   const allFiles = tc.data?.files || []
   const repositories = [...new Map([
@@ -638,57 +689,83 @@ function DockPanel() {
     ...(tc.data?.repos || []).map(repo => [repo.dir, { ...task.repos.find(r => r.dir === repo.dir), ...repo }]),
     ...allFiles.filter(file => !task.repos.some(r => r.dir === file.dir) && !(tc.data?.repos || []).some(r => r.dir === file.dir)).map(file => [file.dir, { repo: file.repo, dir: file.dir }])
   ]).values()]
-  const visibleRepos = repositories.filter(repo => repoFilter === 'all' || repo.repo === repoFilter)
+  const filteredFiles = allFiles.filter(file => (repoFilter === 'all' || file.dir === repoFilter) && file.path.toLowerCase().includes(search.toLowerCase()))
+  const visibleRepos = repositories.filter(repo => (repoFilter === 'all' || repo.dir === repoFilter) && (!search || filteredFiles.some(file => file.dir === repo.dir)))
+  const position = filteredFiles.findIndex(file => file.dir === picked?.dir && file.path === picked?.path)
+  const pick = file => { if (!enlarged) workspaceRef.current?.focus({ preventScroll: true }); setPicked(file); setListOnly(false) }
+  const step = direction => {
+    const next = position < 0 ? (direction > 0 ? 0 : filteredFiles.length - 1) : position + direction
+    if (filteredFiles[next]) pick(filteredFiles[next])
+  }
+  const onKeyDown = event => {
+    if (event.altKey && !event.ctrlKey && !event.metaKey && ['ArrowUp', 'ArrowDown'].includes(event.key)) {
+      event.preventDefault(); event.stopPropagation(); step(event.key === 'ArrowUp' ? -1 : 1)
+    }
+  }
+  const compare = () => fileDiff.isError ? jsx(EmptyState, { title: '文件差异加载失败', description: fileDiff.error?.message })
+    : fileDiff.isLoading || !fileDiff.data ? jsx(EmptyState, { title: '加载文件差异…' })
+    : fileDiff.data.diff ? jsx(FileCompare, { diff: fileDiff.data.diff, mode, wrap }, picked.dir + ':' + picked.path)
+    : jsx(EmptyState, { title: '此文件无可显示的差异' })
+  const diffPane = (dialog = false) => jsxs('section', { className: 'db-diff-pane', 'aria-label': '文件差异', children: picked ? [
+    jsxs('div', { className: 'db-diff-heading', children: [
+      jsx(Button, { className: 'db-diff-back', variant: 'ghost', size: 'sm', onClick: () => { if (dialog) setEnlarged(false); else { workspaceRef.current?.focus({ preventScroll: true }); setPicked(null) } }, children: '← 返回' }),
+      jsx('strong', { title: picked.dir + ' / ' + picked.path, children: picked.repo + ' · ' + picked.path }),
+      jsx('span', { className: 'db-meta', children: position < 0 ? '当前文件不在筛选中' : (position + 1) + ' / ' + filteredFiles.length }),
+      jsx(Button, { variant: 'ghost', size: 'sm', 'aria-label': '上一文件', disabled: !filteredFiles.length || position === 0, onClick: () => step(-1), children: '↑' }),
+      jsx(Button, { variant: 'ghost', size: 'sm', 'aria-label': '下一文件', disabled: !filteredFiles.length || position === filteredFiles.length - 1, onClick: () => step(1), children: '↓' }),
+      !dialog ? jsx(Button, { variant: 'ghost', size: 'sm', ref: expandTrigger, 'aria-label': '放大查看', onClick: () => setEnlarged(true), children: '⤢' }) : null
+    ] }),
+    jsxs('div', { className: 'db-diff-tools', children: [
+      ...[['unified', '统一'], ['split', '并排']].map(([value, label]) => jsx(Button, { variant: 'ghost', size: 'sm', 'aria-pressed': mode === value, onClick: () => setMode(value), children: label }, value)),
+      jsxs('label', { children: [jsx('input', { type: 'checkbox', checked: wrap, onChange: event => setWrap(event.target.checked) }), ' 自动换行'] }),
+      jsx('span', { className: 'db-meta', children: 'Alt + ↑ / ↓' })
+    ] }),
+    enlarged && !dialog ? null : compare()
+  ] : jsx(EmptyState, { title: '选择文件查看差异' }) })
   const summary = taskReviewSummary(task, reviewData)
   const progress = summary.known ? (summary.reviews.length ? summary.merged + ' / ' + summary.reviews.length + ' 个审阅已合并' : '无关联审阅') : '合并进度未知'
-  const context = jsxs('section', { className: 'db-dock-context', children: [
-    jsx('div', { className: 'db-context-label', children: (selectedTask === 'auto' ? '跟随会话' : '当前选中') + ' · ' + taskPrefix(task.id, sessions.data?.zt_sessions) }),
-    jsx('h2', { className: 'db-context-title', title: taskTitle, children: taskTitle }),
-    jsx('div', { className: 'db-meta', children: repositories.length + ' 个关联仓库' })
-  ] })
+  const context = taskContext(repositories.length)
   const observers = task.repos.map(repo => jsx(BoardReviewObserver, { repo, onData }, repo.dir))
-  // Keep task selection available while comparing; never label a pending or failed diff as clean.
-  if (picked) return panel(jsxs('div', { className: 'flex-1 min-h-0 flex flex-col', children: [
-    ...observers,
-    fileDiff.isLoading || fileDiff.isError ? jsxs('div', { children: [
-      jsx(Button, { variant: 'ghost', onClick: () => setPicked(null), children: '← 返回' }),
-      jsx(EmptyState, { title: fileDiff.isError ? '文件差异加载失败' : '加载文件差异…', description: fileDiff.error?.message })
-    ] }) : jsx(FileCompare, { dir: picked.dir, file: picked.repo + ' · ' + picked.path, diff: fileDiff.data?.diff })
-  ] }))
-
-  return panel(jsxs('div', { className: 'flex-1 min-h-0 flex flex-col', children: [
+  return panel(jsxs('div', { className: 'db-dock-body', children: [
     ...observers,
     context,
-    jsxs('div', { className: 'db-dock-toolbar', children: [
-      jsx('strong', { className: 'db-title', children: '关联仓库' }),
-      jsx(Select, { value: repoFilter, onValueChange: value => { setRepoFilter(value); setExpanded(new Set()) }, children: [
-        jsx(SelectTrigger, { className: 'db-control', 'aria-label': '筛选仓库', children: jsx(SelectValue, {}) }),
-        jsx(SelectContent, { className: 'dev-board db-select-menu', children: [
-          jsx(SelectItem, { value: 'all', children: '全部仓库' }),
-          ...[...new Set(repositories.map(repo => repo.repo))].map(name => jsx(SelectItem, { value: name, children: name }, name))
-        ] })
-      ] })
-    ] }),
-    jsx(ScrollArea, { className: 'flex-1 min-h-0', children: jsxs('div', { className: 'db-dock-content', children: [
-      ...visibleRepos.map(repo => {
-        const files = allFiles.filter(file => file.dir === repo.dir)
-        const rows = dockTreeRows(files, expanded, repo.dir)
-        return jsxs('details', { className: 'db-dock-repo', open: true, children: [
-          jsxs('summary', { title: repo.dir, children: [jsx('strong', { children: repo.repo }), jsx('span', { className: 'db-meta', children: files.length ? files.length + ' 文件' : '无未提交变更' })] }),
-          jsxs('div', { className: 'db-repo-body', children: [
-            jsxs('div', { className: 'db-dock-branch', title: repo.branch || '(detached)', children: [jsx(Codicon, { name: 'git-branch', size: 12 }), ' ', repo.branch || '(detached)'] }),
-            jsx('h3', { className: 'db-section', children: '文件变更' }),
-            ...rows.map(row => jsx(TreeRow, {
-              row, expanded, onToggle: () => setExpanded(previous => { const next = new Set(previous); next.has(row.key) ? next.delete(row.key) : next.add(row.key); return next }),
-              onPick: () => setPicked({ dir: row.dir, path: row.path, repo: row.repo }), pickedKey: null
-            }, row.key)),
-            jsx('h3', { className: 'db-section', children: 'PR/MR' }),
-            jsx(ReviewLinks, { repo, compact: true, showRepo: false })
+    jsxs('div', { className: 'db-workspace' + (picked ? ' db-has-selection' : '') + (listOnly ? ' db-list-only' : ''), ref: workspaceRef, tabIndex: 0, onKeyDown, children: [
+      jsxs('section', { className: 'db-files-pane', 'aria-label': '变更文件列表', children: [
+        jsxs('div', { className: 'db-dock-toolbar', children: [
+          jsx('strong', { className: 'db-title', children: '变更文件' + (allFiles.length ? ' · ' + filteredFiles.length + ' / ' + allFiles.length : '') }),
+          jsx(Select, { value: repoFilter, onValueChange: setRepoFilter, children: [
+            jsx(SelectTrigger, { className: 'db-control', 'aria-label': '筛选仓库', children: jsx(SelectValue, {}) }),
+            jsx(SelectContent, { className: 'dev-board db-select-menu', children: [
+              jsx(SelectItem, { value: 'all', children: '全部仓库' }),
+              ...repositories.map(repo => jsx(SelectItem, { value: repo.dir, title: repo.dir, children: repo.repo }, repo.dir))
+            ] })
           ] })
-        ] }, task.id + ':' + repo.dir)
-      }),
-      !visibleRepos.length ? jsx('div', { className: 'db-clean', children: repositories.length ? '暂无匹配仓库' : '无未提交变更 · 当前任务没有关联仓库' }) : null
-    ] }) }),
+        ] }),
+        jsx('div', { className: 'db-file-search', children: jsx('input', { type: 'search', 'aria-label': '搜索文件或路径', placeholder: '搜索文件或路径…', value: search, onChange: event => setSearch(event.target.value) }) }),
+        jsx(ScrollArea, { className: 'db-file-scroll', children: jsxs('div', { className: 'db-dock-content', children: [
+          ...visibleRepos.map(repo => {
+            const files = filteredFiles.filter(file => file.dir === repo.dir)
+            const rows = search ? files.map(file => ({ ...file, name: file.path, type: 'file', depth: 0, key: file.dir + ':' + file.path })) : dockTreeRows(files, expanded, repo.dir)
+            return jsxs('details', { className: 'db-dock-repo', open: !collapsedRepos.has(repo.dir), onToggle: event => { const open = event.currentTarget.open; setCollapsedRepos(previous => { if (previous.has(repo.dir) === !open) return previous; const next = new Set(previous); open ? next.delete(repo.dir) : next.add(repo.dir); return next }) }, children: [
+              jsxs('summary', { title: repo.dir, children: [jsx('strong', { children: repo.repo }), jsx('span', { className: 'db-meta', children: files.length ? files.length + ' 文件' : search ? '无匹配文件' : '无未提交变更' })] }),
+              jsxs('div', { className: 'db-repo-body', children: [
+                jsxs('div', { className: 'db-dock-branch', title: repo.branch || '(detached)', children: [jsx(Codicon, { name: 'git-branch', size: 12 }), ' ', repo.branch || '(detached)'] }),
+                jsx('h3', { className: 'db-section', children: '文件变更' }),
+                ...rows.map(row => jsx(TreeRow, {
+                  row, expanded, onToggle: () => setExpanded(previous => { const next = new Set(previous); next.has(row.key) ? next.delete(row.key) : next.add(row.key); return next }),
+                  onPick: () => pick({ dir: row.dir, path: row.path, repo: row.repo }), pickedKey: picked ? picked.dir + ':' + picked.path : null
+                }, row.key)),
+                jsx('h3', { className: 'db-section', children: 'PR/MR' }),
+                jsx(ReviewLinks, { repo, compact: true, showRepo: false })
+              ] })
+            ] }, task.id + ':' + repo.dir)
+          }),
+          !visibleRepos.length ? jsx('div', { className: 'db-clean', children: repositories.length ? '没有匹配的文件或仓库' : '无未提交变更 · 当前任务没有关联仓库' }) : null
+        ] }) })
+      ] }),
+      diffPane()
+    ] }),
+    enlarged && picked ? workspaceDialog({ open: true, onOpenChange: setEnlarged, returnFocus: expandTrigger, title: picked.repo + ' · ' + picked.path, description: '文件差异', children: jsx('div', { className: 'db-expanded-diff', tabIndex: 0, onKeyDown, children: diffPane(true) }) }) : null,
     jsxs('footer', { className: 'db-dock-footer', children: [
       jsx('div', { className: 'db-progress-label', children: progress }),
       summary.known && summary.reviews.length ? jsx('div', { className: 'db-progress', role: 'progressbar', 'aria-label': '审阅合并进度', 'aria-valuemin': 0, 'aria-valuemax': summary.reviews.length, 'aria-valuenow': summary.merged, children: jsx('span', { style: { width: summary.merged / summary.reviews.length * 100 + '%' } }) }) : null,
