@@ -15,7 +15,7 @@ function atom(value) {
 }
 
 function harness() {
-  const notices = [], calls = [], queries = [], registrations = [], cleanups = []
+  const notices = [], calls = [], queries = [], registrations = [], cleanups = [], windowEvents = []
   const workspaces = new Map()
   const state = {
     focusedStoredSessionId: atom('stored'), focusedSessionId: atom('runtime'),
@@ -25,7 +25,8 @@ function harness() {
   const results = {
     'dev-board': { data: { api_version: 2, tasks: [{ id: '1234', repos: [] }, { id: '5678', repos: [] }] } },
     'dev-board-sessions': { data: { zt_sessions: { 1234: [session] } } },
-    'dev-board-task-changes': { data: { files: [], repos: [] } }
+    'dev-board-task-changes': { data: { files: [], repos: [] } },
+    'dev-board-diff': { data: { diff: '@@ -1 +1 @@\n-old backend line\n+new backend line\n' } }
   }
   const host = {
     state,
@@ -70,16 +71,16 @@ function harness() {
     },
     useMemo: (fn) => fn(),
     useQuery(options) { queries.push(options); return results[options.queryKey[0]] || {} },
-    window: { addEventListener() {}, removeEventListener() {} },
+    window: { addEventListener(name) { windowEvents.push(name) }, removeEventListener() {} },
     ROUTES_AREA: 'routes', SIDEBAR_NAV_AREA: 'nav', PALETTE_AREA: 'palette',
     ...Object.fromEntries(['Badge', 'Button', 'EmptyState', 'ScrollArea', 'Select', 'SelectContent', 'SelectItem',
       'SelectTrigger', 'SelectValue', 'StatusDot', 'Codicon', 'Dialog', 'DialogContent', 'DialogDescription', 'DialogFooter', 'DialogHeader', 'DialogTitle'].map((name) => [name, name]))
   })
   const source = fs.readFileSync(path.join(__dirname, '../dev-board/desktop/plugin.js'), 'utf8')
     .replace(/^import .*\n/gm, '').replace('export default {', 'globalThis.plugin = {')
-  vm.runInContext(source + '\nglobalThis.api = { useActiveZt, DockPanel, TaskCard, SessionChip, BoardPage, ReviewLinks, useReviews, openReview };', context)
+  vm.runInContext("'use strict';\n" + source + '\nglobalThis.api = { useActiveZt, DockPanel, TaskCard, SessionChip, BoardPage, ReviewLinks, useReviews, openReview, FileCompare, buildSideBySide, DiffView };', context)
   const h = {
-    api: context.api, state, session, host, notices, calls, queries, results, registrations, workspaces,
+    api: context.api, state, session, host, notices, calls, queries, results, registrations, workspaces, windowEvents,
     unload() { cleanups.forEach((fn) => fn()) },
     rest: async (url, options) => {
       calls.push(['rest', url, options])
@@ -334,7 +335,7 @@ test('external open failures, false SDK results and credential/scheme URLs surfa
   const notices = []
   const context = vm.createContext({ URL, host: { notify: (n) => notices.push(n) },
     ROUTES_AREA: 'routes', SIDEBAR_NAV_AREA: 'nav', PALETTE_AREA: 'palette' })
-  vm.runInContext(source + '\nglobalThis.openReview = openReview', context)
+  vm.runInContext("'use strict';\n" + source + '\nglobalThis.openReview = openReview', context)
   for (const openExternal of [async () => false, async () => { throw new Error('OS rejected') }]) {
     context.plugin.register({ onDispose() {}, rest() {}, os: { openExternal }, register() {} })
     await context.openReview('https://host/review')
@@ -409,7 +410,7 @@ test('board repo rows and dock all/per-repo selection include code reviews witho
   assert.match(text(panel), /文件/)
   const selects = nodes(panel).filter((n) => n.type === 'Select')
   assert.equal(selects[0].props.value, 'auto')
-  selects[1].props.onValueChange('api')
+  selects[1].props.onValueChange(reviewRepo.dir)
   panel = dock.render(dock.api.DockPanel)
   assert.deepEqual(nodes(panel).filter((n) => n.type === dock.api.ReviewLinks).map((n) => n.props.repo.repo), ['api'])
   const row = nodes(panel).find((n) => typeof n.type === 'function' && n.props.row?.type === 'file')
@@ -575,9 +576,9 @@ test('empty dock keeps repository selection, one clean message and full task con
   assert.doesNotMatch(text(panel), /0 文件|0 变更|api（0）/)
   assert.equal(text(panel).split('无未提交变更').length - 1, 1)
   const selects = nodes(panel).filter(n => n.type === 'Select')
-  selects[1].props.onValueChange('api')
+  selects[1].props.onValueChange(reviewRepo.dir)
   panel = h.render(h.api.DockPanel)
-  assert.equal(nodes(panel).filter(n => n.type === 'Select')[1].props.value, 'api')
+  assert.equal(nodes(panel).filter(n => n.type === 'Select')[1].props.value, reviewRepo.dir)
   assert.equal(nodes(panel).find(n => n.type === h.api.ReviewLinks).props.repo.repo, 'api')
   nodes(panel).find(n => n.type === 'Select').props.onValueChange('1234')
   assert.equal(nodes(h.render(h.api.DockPanel)).find(n => n.type === 'Select').props.value, '1234')
@@ -836,9 +837,9 @@ test('full task identities remain distinct; manual selection survives focus chan
   const render = () => h.render(h.api.DockPanel)
   let panel = render()
   assert.deepEqual(nodes(panel).filter(n => n.type === 'SelectItem' && ['1234', '5678'].includes(n.props.value)).map(text), ['ZT-1234 task', 'GH-5678 · Another delivery'])
-  nodes(panel).filter(n => n.type === 'Select')[1].props.onValueChange('api')
+  nodes(panel).filter(n => n.type === 'Select')[1].props.onValueChange(reviewRepo.dir)
   panel = render()
-  assert.equal(nodes(panel).filter(n => n.type === 'Select')[1].props.value, 'api')
+  assert.equal(nodes(panel).filter(n => n.type === 'Select')[1].props.value, reviewRepo.dir)
   nodes(panel).find(n => n.type === 'Select').props.onValueChange('5678')
   panel = render()
   assert.equal(nodes(panel).filter(n => n.type === 'Select')[1].props.value, 'all')
@@ -939,5 +940,174 @@ test('board has no header switcher and search matches actual review title, numbe
   for (const query of ['747', 'Review', 'feat/exact', 'v3.6.5']) {
     nodes(render()).find(n => n.props['aria-label'] === '搜索任务').props.onChange({ target: { value: query } })
     assert.deepEqual(nodes(render()).filter(n => n.type === h.api.TaskCard).map(n => n.props.task.id), ['1234'])
+  }
+})
+
+function dockFixture() {
+  const h = harness()
+  const repos = [reviewRepo, { ...reviewRepo, dir: '/second/api' }]
+  h.results['dev-board'].data.tasks[0].repos = repos
+  h.results['dev-board-task-changes'].data = { repos, files: repos.flatMap(repo => [
+    { ...repo, path: 'src/same.py', status: 'M', added: 1, removed: 1 },
+    { ...repo, path: 'other.py', status: 'M', added: 1, removed: 0 }
+  ]) }
+  return h
+}
+const labeled = (panel, label) => nodes(panel).find(n => n.props['aria-label'] === label)
+const workspace = panel => nodes(panel).find(n => n.props.className?.split(' ').includes('db-workspace'))
+
+test('dock container layout keeps both panes mounted and preserves list state across narrow back and list-only', () => {
+  const h = dockFixture(), render = () => h.render(h.api.DockPanel)
+  let panel = render()
+  const folder = nodes(panel).find(n => n.props.row?.type === 'dir')
+  folder.props.onToggle()
+  panel = render()
+  const card = nodes(panel).find(n => n.type === 'details' && n.key.endsWith('/second/api'))
+  card.props.onToggle({ currentTarget: { open: false } })
+  labeled(panel, '搜索文件或路径').props.onChange({ target: { value: 'SAME' } })
+  panel = render()
+  const rows = nodes(panel).filter(n => n.props.row?.type === 'file')
+  assert.equal(rows.length, 2)
+  let focused = 0
+  workspace(panel).props.ref.current = { focus() { focused++ } }
+  rows[0].props.onPick()
+  assert.equal(focused, 1)
+  panel = render()
+  assert.match(workspace(panel).props.className, /db-has-selection/)
+  assert.ok(labeled(panel, '变更文件列表'))
+  assert.ok(labeled(panel, '文件差异'))
+  assert.ok(nodes(panel).some(n => n.props.className === 'db-context-title'))
+  assert.equal(nodes(panel).filter(n => n.type === h.api.ReviewLinks).length, 2)
+  const css = nodes(panel).find(n => n.type === 'style').props.children
+  assert.match(css, /container-type:inline-size/)
+  assert.match(css, /@container \(max-width:650px\)/)
+  assert.match(css, /\.db-workspace\.db-has-selection:not\(\.db-list-only\) \.db-files-pane \{ display:none/)
+  assert.match(css, /\.db-workspace\.db-has-selection:not\(\.db-list-only\) \.db-diff-pane \{ display:flex/)
+  assert.doesNotMatch(css, /@media|gradient|backdrop-filter/)
+  button(panel, '← 返回')()
+  assert.equal(focused, 2)
+  panel = render()
+  assert.doesNotMatch(workspace(panel).props.className, /db-has-selection/)
+  assert.equal(labeled(panel, '搜索文件或路径').props.value, 'SAME')
+  assert.equal(nodes(panel).find(n => n.type === 'details' && n.key.endsWith('/second/api')).props.open, false)
+  labeled(panel, '搜索文件或路径').props.onChange({ target: { value: '' } })
+  panel = render()
+  assert.ok(nodes(panel).find(n => n.props.row?.key === folder.props.row.key).props.expanded.has(folder.props.row.key))
+  assert.ok(!nodes(panel).some(n => n.props['aria-label'] === '仅文件列表'))
+  nodes(render()).find(n => n.props.row?.type === 'file').props.onPick()
+  assert.doesNotMatch(workspace(render()).props.className, /db-list-only/)
+})
+
+test('directory filters and filtered navigation distinguish same paths and never install global key handlers', () => {
+  const h = dockFixture(), render = () => h.render(h.api.DockPanel)
+  let panel = render()
+  labeled(panel, '搜索文件或路径').props.onChange({ target: { value: 'same' } })
+  panel = render()
+  nodes(panel).find(n => n.props.row?.type === 'file').props.onPick()
+  panel = render()
+  let prevented = 0
+  const key = (name, altKey = true) => workspace(render()).props.onKeyDown({ key: name, altKey, preventDefault() { prevented++ }, stopPropagation() {} })
+  key('ArrowDown', false)
+  assert.equal(prevented, 0)
+  key('ArrowDown')
+  panel = render()
+  assert.equal(prevented, 1)
+  assert.deepEqual(plain(h.queries.findLast(q => q.queryKey[0] === 'dev-board-diff').queryKey), ['dev-board-diff', '/second/api', 'src/same.py'])
+  assert.equal(labeled(panel, '下一文件').props.disabled, true)
+  labeled(panel, '上一文件').props.onClick()
+  panel = render()
+  assert.equal(labeled(panel, '上一文件').props.disabled, true)
+  nodes(panel).filter(n => n.type === 'Select')[1].props.onValueChange('/second/api')
+  panel = render()
+  assert.equal(nodes(panel).filter(n => n.props.row?.type === 'file').length, 1)
+  labeled(panel, '下一文件').props.onClick()
+  panel = render()
+  assert.deepEqual(plain(h.queries.findLast(q => q.queryKey[0] === 'dev-board-diff').queryKey), ['dev-board-diff', '/second/api', 'src/same.py'])
+  button(panel, '← 返回')()
+  assert.equal(nodes(render()).filter(n => n.type === 'Select')[1].props.value, '/second/api')
+  assert.ok(!h.windowEvents.includes('keydown'))
+  nodes(render()).find(n => n.type === 'Select').props.onValueChange('5678')
+  panel = render()
+  assert.equal(labeled(panel, '搜索文件或路径').props.value, '')
+  assert.equal(nodes(panel).filter(n => n.type === 'Select')[1].props.value, 'all')
+  assert.doesNotMatch(workspace(panel).props.className, /db-has-selection/)
+})
+
+test('dock diff modes, wrapping and SDK expansion render real backend content', () => {
+  const h = dockFixture(), render = () => h.render(h.api.DockPanel)
+  nodes(render()).find(n => n.props.row?.type === 'file').props.onPick()
+  let panel = render()
+  const compare = () => nodes(render()).find(n => n.type === h.api.FileCompare)
+  assert.equal(compare().props.mode, 'unified')
+  assert.match(compare().props.diff, /backend line/)
+  button(panel, '并排')()
+  assert.equal(compare().props.mode, 'split')
+  panel = render()
+  nodes(panel).find(n => n.type === 'input' && n.props.type === 'checkbox').props.onChange({ target: { checked: true } })
+  assert.equal(compare().props.wrap, true)
+  labeled(render(), '放大查看').props.onClick()
+  panel = render()
+  assert.ok(nodes(panel).some(n => n.type === 'Dialog'))
+  assert.equal(nodes(panel).filter(n => n.type === h.api.FileCompare).length, 1)
+  button(panel, '关闭')()
+  assert.ok(!nodes(render()).some(n => n.type === 'Dialog'))
+})
+
+test('diff parser counts only hunk lines; unified and aligned split keep changes and annotations', () => {
+  const h = harness()
+  const diff = 'diff --git a/a b/a\nold mode 100644\nnew mode 100755\nindex 123..456\n--- a/a\n+++ b/a\n@@ -10,3 +20,4 @@\n context\n---actual removed\n+added one\n+added two\n tail\n\\ No newline at end of file\n'
+  const rows = plain(h.api.buildSideBySide(diff))
+  assert.equal(rows[1].o.no, 10)
+  assert.equal(rows[2].o.text, '--actual removed')
+  assert.equal(rows[2].n.no, 21)
+  assert.equal(rows[3].o, null)
+  assert.equal(rows[4].o.no, 12)
+  assert.equal(rows[4].n.no, 23)
+  assert.match(rows[5].note, /No newline/)
+  const unified = h.api.FileCompare({ diff, mode: 'unified', wrap: true })
+  const rendered = text(unified)
+  assert.match(rendered, /actual removed.*added one.*added two.*tail.*No newline/)
+  assert.match(unified.props.className, /db-wrap/)
+  const split = h.api.FileCompare({ diff, mode: 'split', wrap: false })
+  assert.equal(nodes(split).filter(n => n.props.className === 'db-split-row').length, 4)
+  const blank = nodes(split).filter(n => n.props.className === 'db-split-row')[2].props.children[0]
+  assert.equal(blank.props.className, 'db-code-line db-code-ctx')
+  assert.equal(text(blank).trim(), '')
+  for (const raw of ['Binary files a/a and b/a differ', 'old mode 100644\nnew mode 100755', 'rename from a\nrename to b', '(unreadable: a)']) {
+    assert.equal(text(h.api.FileCompare({ diff: raw })), raw)
+  }
+  assert.doesNotThrow(() => h.api.DiffView({ text: diff }))
+})
+
+test('unified diff shows old and new gutters without changing split gutters', () => {
+  const h = harness()
+  const diff = '@@ -10,2 +20,3 @@\n context\n-removed\n\\ No newline at end of file\n+added\n+extra\n\\ No newline at end of file\n@@ -30 +40 @@\n tail\n'
+  const gutters = line => nodes(line).filter(n => n.props.className === 'db-line-no').map(n => n.props.children ?? null)
+  const lines = mode => nodes(h.api.FileCompare({ diff, mode })).filter(n => n.props.className?.startsWith('db-code-line '))
+  assert.deepEqual(plain(lines('unified').map(gutters)), [[10, 20], [11, null], [null, 21], [null, 22], [30, 40]])
+  const unified = h.api.FileCompare({ diff, mode: 'unified' })
+  const notes = nodes(unified).filter(n => n.props.className === 'db-hunk' && text(n).startsWith('\\ No newline'))
+  assert.equal(notes.length, 2)
+  assert.ok(notes.every(n => gutters(n).length === 0))
+  assert.deepEqual(plain(lines('split').map(gutters)), [[10], [20], [11], [null], [null], [21], [null], [22], [30], [40]])
+})
+
+test('pending, failed and empty changes/diffs keep task context without claiming clean', () => {
+  const h = dockFixture(), render = () => h.render(h.api.DockPanel)
+  const changes = h.results['dev-board-task-changes']
+  for (const result of [{}, { isLoading: true }, { isError: true, error: new Error('offline') }]) {
+    h.results['dev-board-task-changes'] = result
+    const panel = render()
+    assert.ok(nodes(panel).some(n => n.props.className === 'db-context-title'))
+    assert.doesNotMatch(text(panel), /无未提交变更/)
+  }
+  h.results['dev-board-task-changes'] = changes
+  nodes(render()).find(n => n.props.row?.type === 'file').props.onPick()
+  for (const result of [{}, { isLoading: true }, { isError: true, error: new Error('offline') }, { data: { diff: '' } }]) {
+    h.results['dev-board-diff'] = result
+    const panel = render()
+    assert.ok(nodes(panel).some(n => n.props.className === 'db-context-title'))
+    assert.ok(nodes(panel).some(n => /加载文件差异|文件差异加载失败|无可显示的差异/.test(n.props.title || '')))
+    assert.doesNotMatch(text(panel), /无未提交变更/)
   }
 })
