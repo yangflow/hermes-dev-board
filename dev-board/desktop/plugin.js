@@ -624,7 +624,6 @@ function DockPanel() {
   const [picked, setPicked] = useState(null) // {dir, path, repo}
   const [search, setSearch] = useState('')
   const [collapsedRepos, setCollapsedRepos] = useState(() => new Set())
-  const [listOnly, setListOnly] = useState(false)
   const [mode, setMode] = useState('unified')
   const [wrap, setWrap] = useState(false)
   const [enlarged, setEnlarged] = useState(false)
@@ -658,7 +657,6 @@ function DockPanel() {
     jsxs('header', { className: 'db-dock-header', children: [
       jsx('span', { className: 'db-worktree-icon', 'aria-hidden': true, children: jsx(Codicon, { name: 'git-branch', size: 16 }) }),
       jsx('strong', { children: 'WORKTREE' }),
-      jsx(Button, { variant: 'ghost', size: 'sm', 'aria-label': '仅文件列表', 'aria-pressed': listOnly, onClick: () => setListOnly(!listOnly), children: '▥' }),
       jsx(Button, { variant: 'ghost', size: 'sm', className: 'db-help', 'aria-label': '查看 Worktree 使用说明', ref: helpTrigger, onClick: () => setHelp(true), children: 'ⓘ' })
     ] }),
     taskSelector,
@@ -692,7 +690,7 @@ function DockPanel() {
   const filteredFiles = allFiles.filter(file => (repoFilter === 'all' || file.dir === repoFilter) && file.path.toLowerCase().includes(search.toLowerCase()))
   const visibleRepos = repositories.filter(repo => (repoFilter === 'all' || repo.dir === repoFilter) && (!search || filteredFiles.some(file => file.dir === repo.dir)))
   const position = filteredFiles.findIndex(file => file.dir === picked?.dir && file.path === picked?.path)
-  const pick = file => { if (!enlarged) workspaceRef.current?.focus({ preventScroll: true }); setPicked(file); setListOnly(false) }
+  const pick = file => { if (!enlarged) workspaceRef.current?.focus({ preventScroll: true }); setPicked(file) }
   const step = direction => {
     const next = position < 0 ? (direction > 0 ? 0 : filteredFiles.length - 1) : position + direction
     if (filteredFiles[next]) pick(filteredFiles[next])
@@ -729,7 +727,7 @@ function DockPanel() {
   return panel(jsxs('div', { className: 'db-dock-body', children: [
     ...observers,
     context,
-    jsxs('div', { className: 'db-workspace' + (picked ? ' db-has-selection' : '') + (listOnly ? ' db-list-only' : ''), ref: workspaceRef, tabIndex: 0, onKeyDown, children: [
+    jsxs('div', { className: 'db-workspace' + (picked ? ' db-has-selection' : ''), ref: workspaceRef, tabIndex: 0, onKeyDown, children: [
       jsxs('section', { className: 'db-files-pane', 'aria-label': '变更文件列表', children: [
         jsxs('div', { className: 'db-dock-toolbar', children: [
           jsx('strong', { className: 'db-title', children: '变更文件' + (allFiles.length ? ' · ' + filteredFiles.length + ' / ' + allFiles.length : '') }),
