@@ -105,21 +105,22 @@ const boardStyles = `
 .dev-board.db-page .db-eyebrow { color:var(--ui-accent); letter-spacing:.14em; font-size:10px; font-weight:600; }
 .dev-board.db-page .db-page-header h1 { margin:0 0 6px; font-size:20px; font-weight:650; }
 .dev-board.db-page .db-page-header p { margin:0; color:var(--ui-text-secondary); }
-.dev-board.db-page .db-board-toolbar { padding:4px 0; gap:10px; }
+.dev-board.db-page .db-board-toolbar { padding:10px 0 16px; gap:10px; border-bottom:1px solid var(--ui-stroke-secondary); }
 .dev-board.db-page .db-search { flex:1 1 220px; }
 .dev-board.db-page select { font:inherit; max-width:100%; padding:6px; border:1px solid var(--ui-stroke-secondary); border-radius:var(--radius-sm); background:transparent; color:var(--ui-text-primary); }
 .dev-board.db-page select:focus-visible { outline:2px solid var(--ui-accent); }
 .dev-board.db-page .db-board-count { display:flex; flex-wrap:wrap; gap:8px 20px; color:var(--ui-text-secondary); font-size:11px; }
-.dev-board.db-page .db-board-count b { color:var(--ui-text-primary); }
+.dev-board.db-page .db-board-count > span + span { border-left:1px solid var(--ui-stroke-secondary); padding-left:20px; }
+.dev-board.db-page .db-board-count b { color:var(--ui-text-primary); font-size:20px; font-weight:550; margin-right:5px; }
 .dev-board.db-page .db-board-count .db-accent { color:var(--ui-accent); }
 .dev-board.db-page .db-card { background:transparent; }
 .dev-board.db-page .db-card-active { border-color:var(--ui-accent); }
 .dev-board.db-page .db-card-head { display:flex; align-items:center; flex-wrap:wrap; gap:10px; padding:12px 14px; }
-.dev-board.db-page .db-task-toggle { display:flex; align-items:center; gap:10px; flex:1 1 240px; min-width:0; padding:0; text-align:left; border:0; background:transparent; color:inherit; }
+.dev-board.db-page .db-task-toggle { display:flex; align-items:center; gap:10px; flex:1 1 360px; min-width:0; padding:0; text-align:left; border:0; background:transparent; color:inherit; }
 .dev-board.db-page .db-task-heading { display:flex; flex-direction:column; flex:1 1 auto; width:100%; gap:4px; min-width:0; }
 .dev-board.db-page .db-title { display:block; flex:0 0 auto; width:100%; min-height:1.5em; }
 .dev-board.db-page .db-ref { display:inline-block; padding:0; border:0; border-radius:0; font:11px monospace; color:var(--ui-text-secondary); }
-.dev-board.db-page .db-progress { display:block; width:64px; height:2px; background:var(--ui-stroke-secondary); border-radius:var(--radius-sm); overflow:hidden; }
+.dev-board.db-page .db-progress { display:block; flex:0 0 48px; width:48px; height:3px; background:var(--ui-stroke-secondary); border-radius:var(--radius-sm); overflow:hidden; }
 .dev-board.db-page .db-progress > span { display:block; height:100%; background:var(--ui-accent); }
 .dev-board.db-page .db-task-actions { display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
 .dev-board.db-page .db-task-actions > button:first-child { color:var(--ui-text-secondary); }
@@ -130,12 +131,12 @@ const boardStyles = `
 .dev-board.db-page .db-repo-table { width:100%; table-layout:fixed; border-collapse:collapse; font-size:12px; }
 .dev-board.db-page .db-repo-table th { color:var(--ui-text-tertiary); font-weight:500; text-align:left; }
 .dev-board.db-page .db-repo-table th, .dev-board.db-page .db-repo-table td { padding:12px 10px; border-top:1px solid var(--ui-stroke-secondary); vertical-align:middle; overflow-wrap:anywhere; }
-.dev-board.db-page .db-repo-table th:nth-child(1) { width:19%; }
-.dev-board.db-page .db-repo-table th:nth-child(2) { width:43%; }
-.dev-board.db-page .db-repo-table th:nth-child(3) { width:12%; }
-.dev-board.db-page .db-repo-table th:nth-child(4) { width:12%; }
-.dev-board.db-page .db-repo-table th:nth-child(5) { width:10%; }
-.dev-board.db-page .db-repo-table th:nth-child(6) { width:4%; }
+.dev-board.db-page .db-repo-table col:nth-child(1) { width:18%; }
+.dev-board.db-page .db-repo-table col:nth-child(2) { width:38%; }
+.dev-board.db-page .db-repo-table col:nth-child(3) { width:12%; }
+.dev-board.db-page .db-repo-table col:nth-child(4) { width:12%; }
+.dev-board.db-page .db-repo-table col:nth-child(5) { width:10%; }
+.dev-board.db-page .db-repo-table col:nth-child(6) { width:10%; }
 .dev-board.db-page .db-repo-name, .dev-board.db-page .db-branch, .dev-board.db-page .db-commit { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .dev-board.db-page .db-branch, .dev-board.db-page .db-hash, .dev-board.db-page .db-target { font-family:monospace; }
 .dev-board.db-page .db-commit { margin-top:5px; color:var(--ui-text-secondary); }
@@ -191,12 +192,23 @@ const boardStyles = `
   .dev-board.db-dock .db-dock-toolbar > button[role="combobox"] { flex-basis:100%; }
   .dev-board.db-dock .db-dock-repo > summary { flex-wrap:wrap; }
 }
+.dev-board.db-page .db-task-meta { display:flex; flex-wrap:wrap; align-items:center; gap:5px 10px; font-size:11px; color:var(--ui-text-tertiary); }
+.dev-board.db-page .db-task-scope { overflow-wrap:anywhere; }
+.dev-board.db-page .db-task-toggle { align-items:flex-start; }
+.dev-board.db-page .db-task-actions { margin-left:auto; }
+.dev-board.db-page .db-board-toolbar > span { flex-shrink:0; }
 @container (max-width:650px) {
+  .dev-board.db-page .db-search { flex-basis:100%; width:100%; }
+  .dev-board.db-page .db-task-toggle { flex-basis:100%; }
+  .dev-board.db-page .db-task-actions { gap:4px; }
+  .dev-board.db-page .db-title { white-space:normal; overflow-wrap:anywhere; }
+  .dev-board.db-page .db-board-count { gap:8px 12px; }
+  .dev-board.db-page .db-board-count > span + span { padding-left:12px; }
   .dev-board.db-page .db-board-content { padding:12px; }
   .dev-board.db-page .db-page-header { align-items:flex-start; flex-wrap:wrap; }
   .dev-board.db-page .db-card-head { padding:12px; }
   .dev-board.db-page .db-repo-table, .dev-board.db-page .db-repo-table tbody, .dev-board.db-page .db-repo-table tr, .dev-board.db-page .db-repo-table td { display:block; width:100%; }
-  .dev-board.db-page .db-repo-table thead { display:none; }
+  .dev-board.db-page .db-repo-table thead, .dev-board.db-page .db-repo-table colgroup { display:none; }
   .dev-board.db-page .db-repo-table tbody { border-top:1px solid var(--ui-stroke-secondary); padding:8px 12px; }
   .dev-board.db-page .db-repo-table td { border:0; padding:5px 0; }
   .dev-board.db-page .db-repo-table td[data-label]::before { content:attr(data-label); display:block; font-size:10px; color:var(--ui-text-tertiary); margin-bottom:3px; }
@@ -611,6 +623,38 @@ function taskIdentity(id, map = {}) {
   return title ? (title.includes(label) ? title : label + ' · ' + title) : label
 }
 
+function decodeTitleText(value) {
+  return String(value || '').replace(/&(#x[0-9a-f]+|#\d+|[a-z][a-z0-9]+);/gi, (entity, code) => {
+    if (code[0] === '#') {
+      const number = code[1].toLowerCase() === 'x' ? parseInt(code.slice(2), 16) : Number(code.slice(1))
+      return number > 0 && number <= 0x10ffff && !(number >= 0xd800 && number <= 0xdfff) ? String.fromCodePoint(number) : entity
+    }
+    const named = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' }
+    if (Object.hasOwn(named, code)) return named[code]
+    return typeof DOMParser !== 'undefined' ? new DOMParser().parseFromString(entity, 'text/html').body.textContent : entity
+  })
+}
+
+function taskHeading(id, map) {
+  const prefix = decodeTitleText(taskPrefix(id, map))
+  const full = decodeTitleText(taskIdentity(id, map))
+  const original = full.startsWith(prefix) ? full.slice(prefix.length).replace(/^\s*[·:：-]?\s*/, '') : full
+  // Only explicit, delimited scope prefixes are metadata; never infer from a branch or repository.
+  const scopes = []
+  let business = original
+  while (true) {
+    const match = business.match(/^(?:【([^】]+)】|\[([^\]]+)\])\s*/)
+    if (!match) break
+    const scope = match[1] || match[2]
+    if (!/^(?:服务端|客户端|前端|后端|SIN|SVN|SPK|SID|SBR)(?:[\s/、,，·|+-]+(?:服务端|客户端|前端|后端|SIN|SVN|SPK|SID|SBR))*$/.test(scope)) break
+    scopes.push(scope)
+    business = business.slice(match[0].length)
+  }
+  return { prefix, title: scopes.length && business ? business : original, scope: business ? scopes.join(' · ') : '', full }
+}
+
+const formatCount = value => Number(value).toLocaleString('en-US')
+
 function workspaceDialog({ open, onOpenChange, title, description, children, returnFocus, footer }) {
   return jsx(Dialog, { open, onOpenChange, children: jsxs(DialogContent, {
     className: 'dev-board db-dialog',
@@ -915,6 +959,7 @@ function TaskCard({ task, activeZt, editorName = 'VS Code', expanded = true, onT
   }, [detailDir, details])
   const detailTrigger = useRef(null)
   const title = taskIdentity(task.id, sessions.data?.zt_sessions)
+  const heading = taskHeading(task.id, sessions.data?.zt_sessions)
   const summary = taskReviewSummary(task, reviewData)
   const pill = (label, tone = 'muted') => jsx('span', { className: 'db-pill db-pill-' + tone, children: label })
   return jsxs('section', { className: cn('db-card', activeZt === task.id && 'db-card-active'), children: [
@@ -922,9 +967,13 @@ function TaskCard({ task, activeZt, editorName = 'VS Code', expanded = true, onT
       jsxs('button', { type: 'button', className: 'db-task-toggle', 'aria-expanded': expanded, onClick: onToggle, children: [
         jsx('span', { 'aria-hidden': true, children: expanded ? '⌄' : '›' }),
         jsxs('span', { className: 'db-task-heading', children: [
-          jsxs('span', { className: 'db-title', children: [jsx('span', { className: 'db-ref', children: taskPrefix(task.id, sessions.data?.zt_sessions) }), ' ', jsx('strong', { title, children: title.startsWith(taskPrefix(task.id, sessions.data?.zt_sessions) + ' ') ? title.slice(taskPrefix(task.id, sessions.data?.zt_sessions).length + 1) : title })] }),
-          jsx('span', { className: 'db-meta', children: task.repos.length + ' 个仓库' + (summary.known ? ' · ' + summary.merged + '/' + summary.reviews.length + ' 已合并' : '') }),
-          summary.known && summary.reviews.length ? jsx('span', { className: 'db-progress', children: jsx('span', { style: { width: (summary.merged / summary.reviews.length * 100) + '%' } }) }) : null
+          jsxs('span', { className: 'db-title', children: [jsx('span', { className: 'db-ref', children: heading.prefix }), ' ', jsx('strong', { title: heading.full, children: heading.title })] }),
+          jsxs('span', { className: 'db-task-meta', children: [
+            jsx('span', { children: formatCount(task.repos.length) + ' 个仓库' }),
+            summary.known ? jsx('span', { children: formatCount(summary.merged) + '/' + formatCount(summary.reviews.length) + ' 已合并' }) : null,
+            summary.known && summary.reviews.length ? jsx('span', { className: 'db-progress', 'aria-label': '已合并 ' + summary.merged + '/' + summary.reviews.length, children: jsx('span', { style: { width: (summary.merged / summary.reviews.length * 100) + '%' } }) }) : null,
+            heading.scope ? jsx('span', { className: 'db-task-scope', children: heading.scope }) : null
+          ] })
         ] })
       ] }),
       summary.needs ? pill('需要处理', 'warn') : summary.done ? pill('已全部合并', 'good') : summary.known ? pill(summary.reviews.length ? summary.pending + ' 个待合并' : '无关联审阅', summary.reviews.length ? 'warn' : 'muted') : pill('合并进度未知'),
@@ -937,10 +986,10 @@ function TaskCard({ task, activeZt, editorName = 'VS Code', expanded = true, onT
           title: '关联已有会话', description: '搜索标题、Profile 或会话 ID，选择后确认。',
           children: jsxs('div', { children: [
             jsx('input', { autoFocus: true, type: 'search', className: 'db-search db-session-search', placeholder: '搜索会话标题、Profile 或 ID…', 'aria-label': '搜索会话', value: sessionSearch, onChange: event => setSessionSearch(event.target.value) }),
-            jsx('div', { className: 'db-candidates', children: candidates.filter(s => [s.title, s.id, s.profile].join(' ').toLowerCase().includes(sessionSearch.toLowerCase())).map(s => jsx(Button, {
+            jsx('div', { className: 'db-candidates', children: candidates.filter(s => [decodeTitleText(s.title), s.id, s.profile].join(' ').toLowerCase().includes(sessionSearch.toLowerCase())).map(s => jsx(Button, {
               variant: candidate === JSON.stringify([s.profile, s.id]) ? 'secondary' : 'ghost',
               'aria-pressed': candidate === JSON.stringify([s.profile, s.id]), onClick: () => setCandidate(JSON.stringify([s.profile, s.id])),
-              className: 'db-session-option', children: jsx('span', { className: 'db-session-title', children: s.title || '无标题' })
+              className: 'db-session-option', children: jsx('span', { className: 'db-session-title', children: decodeTitleText(s.title) || '无标题' })
             }, JSON.stringify([s.profile, s.id]))) })
           ] }),
           footer: jsxs('div', { children: [jsx(Button, { variant: 'secondary', onClick: () => setLinking(false), children: '取消' }), jsx(Button, {
@@ -969,6 +1018,7 @@ function TaskCard({ task, activeZt, editorName = 'VS Code', expanded = true, onT
       ] })
     ] }),
     expanded ? jsxs('table', { className: 'db-repo-table', children: [
+      jsx('colgroup', { children: ['repo', 'commit', 'review', 'target', 'state', 'actions'].map(key => jsx('col', {}, key)) }),
       jsx('thead', { children: jsx('tr', { children: ['仓库', '分支 + 最新提交', '合并请求', '目标分支', '状态', ''].map(label => jsx('th', { scope: 'col', children: label }, label)) }) }),
       ...task.repos.map(r => {
         const entry = reviewData[r.dir]
@@ -1016,7 +1066,7 @@ function BoardPage() {
   const summaries = tasks.map(t => taskReviewSummary(t, reviewData))
   const known = summaries.length > 0 && summaries.every(s => s.known)
   const visible = sorted.filter(t => {
-    const title = (sessions.data?.zt_sessions?.[t.id] || []).map(s => s.title + ' ' + s.label).join(' ')
+    const title = (sessions.data?.zt_sessions?.[t.id] || []).map(s => decodeTitleText(s.title) + ' ' + s.label).join(' ')
     const matches = (t.id + ' ' + title + ' ' + t.repos.map(r => r.repo + ' ' + (r.branch || '') + ' ' + (r.last || '') + ' ' + (reviewData[r.dir]?.branch === r.branch ? (reviewData[r.dir]?.data?.reviews || []).map(v => v.title + ' ' + v.number + ' ' + v.target_branch).join(' ') : '')).join(' ')).toLowerCase().includes(search.toLowerCase())
     const summary = taskReviewSummary(t, reviewData)
     return matches && (status === 'all' || (status === 'pending' ? summary.waiting : summary.done))
@@ -1036,10 +1086,10 @@ function BoardPage() {
         jsx(Button, { variant: 'ghost', size: 'sm', 'aria-label': '刷新', title: '刷新', disabled: board.isFetching, onClick: () => board.refetch(), children: '↻' })
       ] }),
       jsxs('div', { className: 'db-board-count', children: [
-        jsxs('span', { children: [jsx('b', { children: tasks.length }), ' 个任务'] }),
-        jsxs('span', { children: [jsx('b', { children: repos.length }), ' 个关联仓库'] }),
-        known ? jsxs('span', { children: [jsx('b', { className: 'db-accent', children: summaries.reduce((n, s) => n + s.pending, 0) }), ' 个待合并'] }) : jsx('span', { children: '合并进度待确认' }),
-        jsxs('span', { children: [jsx('b', { children: summaries.filter(s => s.needs).length }), ' 个任务需要处理'] })
+        jsxs('span', { children: [jsx('b', { children: formatCount(tasks.length) }), ' 个任务'] }),
+        jsxs('span', { children: [jsx('b', { children: formatCount(repos.length) }), ' 个关联仓库'] }),
+        known ? jsxs('span', { children: [jsx('b', { className: 'db-accent', children: formatCount(summaries.reduce((n, s) => n + s.pending, 0)) }), ' 个待合并'] }) : jsx('span', { children: '合并进度待确认' }),
+        jsxs('span', { children: [jsx('b', { children: formatCount(summaries.filter(s => s.needs).length) }), ' 个任务需要处理'] })
       ] }),
       ...visible.map(t => {
         const expanded = overrides[t.id] ?? (collapsed === null ? t.id === sorted[0]?.id || t.id === activeZt : !collapsed)
@@ -1110,7 +1160,7 @@ function RestoreWorktrees({ repos, refresh }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const trigger = useRef(null)
-  return jsxs('span', { children: [jsx(Button, { variant: 'secondary', size: 'sm', onClick: event => { trigger.current = event?.currentTarget; setOpen(true) }, children: '恢复隐藏仓库' }),
+  return jsxs('span', { children: [jsx(Button, { variant: 'secondary', size: 'sm', disabled: !repos.length, title: repos.length ? '恢复隐藏仓库' : '当前没有隐藏仓库', onClick: event => { trigger.current = event?.currentTarget; setOpen(true) }, children: '恢复隐藏仓库' }),
     open ? workspaceDialog({ open, onOpenChange: setOpen, returnFocus: trigger, title: '恢复隐藏仓库', description: '隐藏不会阻止 cron 自动清理。', children: jsx('div', { className: 'db-candidates', children: repos.length ? repos.map(repo => jsx(Button, { variant: 'secondary', disabled: busy, children: repo.dir, onClick: async () => {
       setBusy(true)
       try { const result = await rest('/worktree', { method: 'POST', body: { dir: repo.dir, action: 'restore' } }); if (!result?.ok) throw new Error('恢复失败'); await refresh?.() }

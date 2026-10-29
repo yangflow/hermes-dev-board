@@ -1130,7 +1130,7 @@ test('explicit picker uses candidate identity, persists owner, opens and follows
   const search = nodes(render()).find(n => n.props['aria-label'] === '搜索会话')
   search.props.onChange({ target: { value: 'default' } })
   assert.ok(!nodes(render()).some(n => n.type === 'Button' && n.key === JSON.stringify(['dev', 'same'])))
-  nodes(render()).find(n => n.props['aria-label'] === '搜索会话').props.onChange({ target: { value: 'same' } })
+  nodes(render()).find(n => n.props['aria-label'] === '搜索会话').props.onChange({ target: { value: 'no task' } })
   await button(render(), 'no task id')()
   assert.equal(nodes(render()).find(n => n.type === 'Button' && text(n) === '确认关联').props.disabled, false)
   await button(render(), '确认关联')()
@@ -1290,4 +1290,30 @@ test('dock drops cached files and selection when a repository is hidden or remov
   assert.equal(nodes(panel).filter(n => n.props.row?.type === 'file').length, 1)
   assert.ok(!nodes(panel).some(n => n.props.repo?.dir === repos[0].dir))
   assert.ok(!nodes(panel).some(n => n.props['aria-label'] === '返回仓库文件列表'))
+})
+
+
+test('business headings decode entities as text and split only explicit scope', () => {
+  const h = harness()
+  const render = title => {
+    h.results['dev-board-sessions'].data.zt_sessions[1234][0].title = title
+    return h.render(h.api.TaskCard, { task: { id: '1234', repos: [reviewRepo] } })
+  }
+  let card = render('ZT-1234 【服务端 · SIN / SVN】运营 &amp; 黑名单 &#x4f18;化 &lt;img src=x onerror=alert(1)&gt;')
+  assert.equal(text(nodes(card).find(n => n.props.className === 'db-title')).replace(/\s+/g, ' '), 'ZT-1234 运营 & 黑名单 优化 <img src=x onerror=alert(1)>')
+  assert.equal(text(nodes(card).find(n => n.props.className === 'db-task-scope')), '服务端 · SIN / SVN')
+  assert.ok(!nodes(card).some(n => n.type === 'img' || n.props.dangerouslySetInnerHTML))
+  card = render('ZT-1234 【SIN/SVN】【服务端】运营后台')
+  assert.equal(text(nodes(card).find(n => n.props.className === 'db-task-scope')), 'SIN/SVN · 服务端')
+  card = render('ZT-1234 【未知范围】原标题 &quot;完整&quot;')
+  assert.match(text(nodes(card).find(n => n.props.className === 'db-title')), /【未知范围】原标题 "完整"/)
+  assert.ok(!nodes(card).some(n => n.props.className === 'db-task-scope'))
+  card = render('ZT-1234 SIN 运营后台服务端优化')
+  assert.match(text(nodes(card).find(n => n.props.className === 'db-title')), /SIN 运营后台服务端优化/)
+})
+
+test('restore is disabled without hidden repositories', () => {
+  const h = harness()
+  const panel = h.render(h.api.RestoreWorktrees, { repos: [] })
+  assert.equal(nodes(panel).find(n => n.type === 'Button').props.disabled, true)
 })
