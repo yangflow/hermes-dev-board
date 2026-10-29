@@ -73,7 +73,7 @@ ID 使用 ASCII 字母、数字、下划线或短横线；名称非空且最多 
 新任务默认第一个待办类状态；开始任务进入第一个进行类，重新打开进入第一个待办类。
 进行类任务推进到后续配置的进行/完成类状态（无后续则进入第一个完成类）。原有会话和拖拽逻辑保留。
 
-`GET /statuses` 返回定义；`GET /tasks` 同时返回 `statuses` 和 `api_version: 3`。
+`GET /statuses` 返回定义；`GET /tasks` 同时返回 `statuses` 和 `api_version: 4`。
 `PUT /statuses` 提交完整有序 `statuses` 及 `migrations`（删除状态 → 保留状态，例如 `{"todo":"backlog"}`）。
 删除在用状态必须明确迁移目标；配置与任务迁移一次原子保存，其他任务字段保留。内置 ID 也允许删除，外部导入器需读取首个待办类 ID。
 
@@ -88,3 +88,19 @@ ID 使用 ASCII 字母、数字、下划线或短横线；名称非空且最多 
 脚本可输出 JSON 汇总，只提取 `created`、`updated`、`skipped`、`failed`、`total` 的非负整数计数。
 可选 `stage_exits` 数组最多含 100 个 -255 至 255 的整数退出码，不含阶段名称。
 响应仅含白名单计数/退出码、时间戳及简短生成结果，不返回原始输出、stderr、凭据或异常文本。
+
+## 启动分析提示（API v4）
+
+开始任务会在打开准确的 stored session 后，向已确认新建且为空的会话发送中文分析提示，
+包含 `title`、`ref`、`url`、`note`，要求先读取详情与相关技能、分析需求和影响范围，
+提出简洁方案，本轮先不修改代码。已有任务关联或同名会话只打开，不重发，无特定任务平台逻辑。
+
+`start_prompt_state` 保存 `pending`、`attempting`、`claimed`、`failed` 或空字符串。
+**重试分析提示** 显式重试 pending/failed 状态，检查关联 profile、空历史、无待处理请求和草稿文本，
+保留用户草稿。`claimed` 只表示界面接收请求，不表示模型完成。
+中断或保存失败可能留下不确定的 `attempting`，不会自动重发；请打开会话检查记录后手动发送。
+需同时更新前后端至 API v4。默认模板固定，本次不新增设置页面。
+
+发送前通过 `POST /tasks/{id}/start-prompt/claim` 在任务锁内将 pending/failed 原子认领为 attempting，必须准确匹配 `session_id` 与 `session_profile`；竞争者收到 409 后停止发送。修改会话关联或提示状态的 PATCH 必须携带 `expected_start`，包含旧 session_id、session_profile、start_prompt_state（缺省按空字符串）。迟到的关联写入及重启断链重置会被拒绝，claimed/attempting 不允许回写 pending。
+
+唯一旧客户端兼容窗口：PATCH 不含 `expected_start`，字段仅含 `session_id`、`session_profile`、`session_title` 中的字段，且当前这三个关联字段及 `start_prompt_state` 均为空时，允许首次绑定。检查与保存均在任务锁内，后续或并发竞争失败的绑定返回 409；此窗口不能修改提示状态，其他关联/提示 PATCH 仍须 CAS。

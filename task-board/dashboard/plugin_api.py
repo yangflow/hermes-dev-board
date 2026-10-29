@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, HTTPException
 
 router = APIRouter()
-API_VERSION = 3  # Bump when the API contract changes.
+API_VERSION = 4  # Bump when the API contract changes.
 
 
 def _task_url(url: str) -> str:
@@ -140,7 +140,7 @@ def _tasks_write(data: dict) -> None:
 
 
 def _task_fields(body: dict, statuses) -> dict:
-    strings = {"title", "ref", "note", "url", "session_id", "session_profile", "session_title"}
+    strings = {"title", "ref", "note", "url", "session_id", "session_profile", "session_title", "start_prompt_state"}
     if set(body) - strings - {"status", "pinned", "labels"}:
         raise HTTPException(400, "unknown task field")
     if any(not isinstance(value, str) for key, value in body.items() if key in strings):
@@ -151,6 +151,8 @@ def _task_fields(body: dict, statuses) -> dict:
         raise HTTPException(400, "invalid task status")
     if "pinned" in body and not isinstance(body["pinned"], bool):
         raise HTTPException(400, "pinned must be boolean")
+    if "start_prompt_state" in body and body["start_prompt_state"] not in {"", "pending", "attempting", "claimed", "failed"}:
+        raise HTTPException(400, "invalid start prompt state")
     if body.get("url"):
         _task_url(body["url"])
     if "labels" in body:
@@ -193,10 +195,39 @@ def create_task(body: dict) -> dict:
 def edit_task(task_id: str, body: dict) -> dict:
     with _tasks_lock:
         data = _tasks_read()
-        fields = _task_fields(body, data["statuses"])
+        expected = body.get("expected_start")
+        fields = _task_fields({k: v for k, v in body.items() if k != "expected_start"}, data["statuses"])
         task = _task_find(data, task_id)
+        start_keys = ("session_id", "session_profile", "start_prompt_state")
+        if set(fields) & {*start_keys, "session_title"}:
+            current = {k: task.get(k, "") for k in start_keys}
+            first_legacy_binding = (
+                "expected_start" not in body
+                and set(fields) <= {"session_id", "session_profile", "session_title"}
+                and all(not task.get(k, "") for k in (*start_keys, "session_title"))
+            )
+            if not first_legacy_binding and expected != current:
+                raise HTTPException(409, "task start changed")
+            if task.get("start_prompt_state") in {"claimed", "attempting"} and fields.get("start_prompt_state") == "pending":
+                raise HTTPException(409, "task start already claimed")
+            if fields.get("start_prompt_state") == "attempting":
+                raise HTTPException(400, "use start-prompt claim")
         _check_labels(data, fields)
         task.update(fields, updated_at=datetime.now(timezone.utc).isoformat())
+        _tasks_write(data)
+        return task
+
+
+@router.post("/tasks/{task_id}/start-prompt/claim")
+def claim_start_prompt(task_id: str, body: dict) -> dict:
+    if set(body) != {"session_id", "session_profile"} or any(not isinstance(v, str) or not v for v in body.values()):
+        raise HTTPException(400, "exact session_id and session_profile required")
+    with _tasks_lock:
+        data = _tasks_read()
+        task = _task_find(data, task_id)
+        if any(task.get(k, "") != v for k, v in body.items()) or task.get("start_prompt_state") not in {"pending", "failed"}:
+            raise HTTPException(409, "task start already claimed or changed")
+        task.update(start_prompt_state="attempting", updated_at=datetime.now(timezone.utc).isoformat())
         _tasks_write(data)
         return task
 

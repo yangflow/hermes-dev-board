@@ -28,7 +28,8 @@ function harness(saved = new Map()) {
       assert.ok(['error', 'warning', 'info', 'success'].includes(input.kind))
       notices.push(input)
     },
-    getGateway: () => ({ request: async (method, params) => { calls.push(['rpc', method, params]); return method === 'session.create' ? { session_id: 'runtime-task', stored_session_id: 'stored-task' } : {} } }),
+    getGateway: () => ({ request: async (method, params) => { calls.push(['rpc', method, params]); return method === 'session.list' ? { sessions: [] } : { session_id: 'runtime-task', stored_session_id: 'stored-task', message_count: 0, messages: [], running: false, pending: [], prompts: [] } } }),
+    composer: { getDraft: async () => '', submit(id, text) { calls.push(['submit', id, text]); return true } },
     newChat() { throw new Error('newChat only creates a draft') },
     async openSession(id, options) { assert.equal(options.keepAllProfilesScope, false); calls.push(['session', id, options]) },
     navigate(route) { calls.push(['navigate', route]) }
@@ -76,7 +77,7 @@ function harness(saved = new Map()) {
     unload() { cleanups.forEach((fn) => fn()) },
     rest: async (url, options) => {
       calls.push(['rest', url, options])
-      return url === '/tasks' && !options ? { api_version: 3, tasks: [] } : { ok: true }
+      return url === '/tasks' && !options ? { api_version: 4, tasks: [] } : { ok: true }
     },
     render(fn, props) {
       let node, rounds = 0
@@ -115,7 +116,7 @@ const todoTask = { id: '10', title: 'Ship feature', ref: 'GH-1234', note: 'remem
 function tasksHarness(tasks = [todoTask]) {
   const h = harness()
   h.results['task-board-labels'] = { data: { labels: {} }, refetch: async () => {} }
-  h.results['task-board-tasks'] = { data: { api_version: 3, tasks }, refetch: async () => {} }
+  h.results['task-board-tasks'] = { data: { api_version: 4, tasks }, refetch: async () => {} }
   h.renderTasks = () => h.render(h.api.TasksPage)
   return h
 }
@@ -167,7 +168,9 @@ test('task start creates real titled session on current gateway, then reuses sav
   await button(node, '▷ 开始任务')()
   const rpc = h.calls.filter(c => c[0] === 'rpc')
   assert.deepEqual(plain(rpc), [
-    ['rpc', 'session.create', { title: 'GH-1234 Ship feature', profile: 'default' }]
+    ['rpc', 'session.list', { title: 'GH-1234 Ship feature', profile: 'default' }],
+    ['rpc', 'session.create', { title: 'GH-1234 Ship feature', profile: 'default' }],
+    ['rpc', 'session.resume', { session_id: 'stored-task', profile: 'default' }]
   ])
   const saved = h.calls.find(c => c[0] === 'rest')[2].body
   assert.equal(saved.session_profile, 'default') // active gateway, not focused chat's dev profile
@@ -210,7 +213,7 @@ test('GH reference and URL roundtrip through form and titled session without par
   assert.equal(nodes(h.renderTasks()).find(n => n.props['aria-label'] === '任务编号(ref)').props.value, body.ref)
   assert.equal(nodes(h.renderTasks()).find(n => n.props['aria-label'] === '链接(url)').props.value, body.url)
   await button(h.renderTasks(), '▷ 开始任务')()
-  assert.deepEqual(plain(h.calls.find(c => c[0] === 'rpc')), ['rpc', 'session.create', { title: 'GH-12 fix login', profile: 'default' }])
+  assert.deepEqual(plain(h.calls.find(c => c[1] === 'session.create')), ['rpc', 'session.create', { title: 'GH-12 fix login', profile: 'default' }])
   for (const ref of ['ZT-1234', 'JIRA-100', 'anything', '7']) assert.equal(h.api.taskSessionTitle({ title: 'fix login', ref }), ref + ' fix login')
 })
 
@@ -241,10 +244,11 @@ test('task start failures stay visible and retries retain the created identity',
 test('task launch ignores concurrent stale clicks and marks doing only after open succeeds', async () => {
   const h = tasksHarness()
   let finish
-  h.host.getGateway = () => ({ request: () => new Promise(resolve => { finish = resolve }) })
+  h.host.getGateway = () => ({ request: method => method === 'session.list' ? Promise.resolve({ sessions: [] }) : new Promise(resolve => { finish = resolve }) })
   const launch = button(h.renderTasks(), '▷ 开始任务')
   const pending = launch()
   await launch()
+  await Promise.resolve()
   finish({ stored_session_id: 'one', session_id: 'runtime-one' })
   await pending
   assert.equal(h.calls.filter(c => c[0] === 'session').length, 1)
@@ -449,7 +453,7 @@ test('cached tasks remain visible after a failed refetch in board and list, then
     let unavailable = true
     h.rest = async () => {
       if (unavailable) throw new Error('503: tasks unavailable')
-      return { api_version: 3, tasks: [{ ...todoTask, title: 'Recovered task' }] }
+      return { api_version: 4, tasks: [{ ...todoTask, title: 'Recovered task' }] }
     }
     query.refetch = async () => {
       try {
@@ -471,9 +475,9 @@ test('cached tasks remain visible after a failed refetch in board and list, then
   }
 })
 
-test('old v1 backend, mismatched or absent API version shows stale banner; v3 stays normal', async () => {
+test('old v1 backend, mismatched or absent API version shows stale banner; v4 stays normal', async () => {
   for (const view of ['board', 'list']) {
-    for (const version of [undefined, 0, 1, 2, 4]) {
+    for (const version of [undefined, 0, 1, 2, 3, 5]) {
       const h = tasksHarness()
       if (view === 'list') button(h.renderTasks(), '☰ 列表')()
       h.rest = async () => ({ api_version: version, tasks: [] })
@@ -635,7 +639,7 @@ test('non-todo tasks without sessions retain session launch in overflow', async 
     const h = tasksHarness([{ ...todoTask, status }])
     const more = nodes(h.renderTasks()).find(n => n.type === 'DropdownMenuContent')
     await button(more, '开始会话')()
-    assert.equal(h.calls.find(c => c[0] === 'rpc')[1], 'session.create')
+    assert.equal(h.calls.find(c => c[1] === 'session.create')[1], 'session.create')
     assert.equal(h.calls.at(-1)[2].body.status, 'doing')
   }
 })
@@ -725,7 +729,7 @@ test('pin mutation refreshes marker and pinned-first order in each column and li
     let refreshes = 0
     h.results['task-board-tasks'].refetch = async () => {
       refreshes++
-      h.results['task-board-tasks'].data = { api_version: 3, tasks: stored.map(task => ({ ...task })) }
+      h.results['task-board-tasks'].data = { api_version: 4, tasks: stored.map(task => ({ ...task })) }
     }
     if (view === 'list') button(h.renderTasks(), '☰ 列表')()
     for (const status of ['todo', 'doing', 'done']) {
@@ -987,7 +991,7 @@ test('restart confirms unlinking, preserves session and fields, and uses first t
     return result
   }
   await button(h.renderTasks(), '确认重新开始')()
-  assert.deepEqual(plain(h.calls), [['rest', '/tasks/10', { method: 'PATCH', body: { session_id: '', session_profile: '', session_title: '', status: 'inbox' } }]])
+  assert.deepEqual(plain(h.calls), [['rest', '/tasks/10', { method: 'PATCH', body: { expected_start: { session_id: 'old', session_profile: 'dev', start_prompt_state: '' }, session_id: '', session_profile: '', session_title: '', start_prompt_state: '', status: 'inbox' } }]])
   assert.equal(task.title, todoTask.title)
   assert.equal(nodes(h.renderTasks()).some(n => n.type === 'DialogContent'), false)
   assert.ok(button(h.renderTasks(), '▷ 开始任务'))
@@ -1004,7 +1008,7 @@ test('restart failure retains cached linkage; pending confirmation cannot repeat
   button(h.renderTasks(), '取消')()
   h.rest = originalRest
   await button(h.renderTasks(), '▷ 开始任务')()
-  assert.equal(h.calls.filter(c => c[0] === 'rpc').length, 1, 'failed reset retains cached session')
+  assert.equal(h.calls.filter(c => c[1] === 'session.create').length, 1, 'failed reset retains cached session')
   button(h.renderTasks(), '重新开始任务')()
   let finish
   h.rest = () => new Promise(resolve => { finish = resolve })
@@ -1021,6 +1025,133 @@ test('restart failure retains cached linkage; pending confirmation cannot repeat
   assert.equal(nodes(h.renderTasks()).some(n => n.type === 'DialogContent'), false)
   assert.equal(nodes(h.renderTasks()).some(n => n.type === 'Button' && text(n) === '重新开始任务'), false)
   await button(h.renderTasks(), '▷ 开始任务')()
-  assert.equal(h.calls.filter(c => c[0] === 'rpc').length, 2, 'successful reset discards cached session')
+  assert.equal(h.calls.filter(c => c[1] === 'session.create').length, 2, 'successful reset discards cached session')
   assert.equal(h.calls.some(c => c[1] === 'session.delete'), false)
+})
+
+const emptySnapshot = { message_count: 0, messages: [], running: false, pending: [], prompts: [] }
+
+test('analysis start waits for open, persists attempt before exact stored submit and includes task fields', async () => {
+  const h = tasksHarness([{ ...todoTask, url: 'https://example.com/issue/12' }])
+  let finishOpen
+  h.host.openSession = async (id, options) => { h.calls.push(['session', id, options]); await new Promise(resolve => { finishOpen = resolve }) }
+  const pending = button(h.renderTasks(), '▷ 开始任务')()
+  while (!finishOpen) await Promise.resolve()
+  assert.equal(h.calls.some(c => c[0] === 'submit'), false)
+  finishOpen()
+  await pending
+  const submit = h.calls.findIndex(c => c[0] === 'submit')
+  assert.equal(h.calls[submit][1], 'stored-task')
+  assert.equal(h.calls[submit - 1][1], '/tasks/10/start-prompt/claim')
+  assert.match(h.calls[submit][2], /任务标题：Ship feature\n任务编号：GH-1234\n任务链接：https:\/\/example.com\/issue\/12\n任务备注：remember this/)
+  assert.ok(h.calls[submit][2].endsWith('请先读取任务详情和相关技能，结合现有代码分析需求、影响范围及待确认项，给出简洁方案；本轮先不修改代码。'))
+  assert.equal(h.calls[submit + 1][2].body.start_prompt_state, 'claimed')
+})
+
+test('existing exact-title sessions, nonempty and incomplete create snapshots never receive auto prompt', async () => {
+  for (const kind of ['existing-empty', 'history', 'pending', 'unknown']) {
+    const h = tasksHarness()
+    h.host.getGateway = () => ({ request: async method => {
+      if (method === 'session.list') return { sessions: kind === 'existing-empty' ? [{ id: 'stored-task' }] : [] }
+      return { stored_session_id: 'stored-task', ...emptySnapshot,
+        ...(kind === 'history' ? { message_count: 1, messages: [{ role: 'user', content: 'already sent' }] } : {}),
+        ...(kind === 'pending' ? { pending: [{}] } : {}), ...(kind === 'unknown' ? { messages: undefined } : {}) }
+    } })
+    await button(h.renderTasks(), '▷ 开始任务')()
+    assert.equal(h.calls.some(c => c[0] === 'submit'), false, kind)
+  }
+})
+
+test('failed submit keeps linkage, only explicit retry sends, and claimed state survives later write failure', async () => {
+  const h = tasksHarness()
+  h.host.composer.submit = (id, text) => { h.calls.push(['submit', id, text]); return false }
+  await button(h.renderTasks(), '▷ 开始任务')()
+  assert.equal(h.calls.find(c => c[0] === 'rest')[2].body.session_id, 'stored-task')
+  await button(h.renderTasks(), '▷ 开始任务')()
+  assert.equal(h.calls.filter(c => c[0] === 'submit').length, 1)
+  const rest = h.rest
+  h.rest = async (url, options) => {
+    if (options?.body.start_prompt_state === 'claimed') throw new Error('claim save failed')
+    return rest(url, options)
+  }
+  h.host.composer.submit = (id, text) => { h.calls.push(['submit', id, text]); return true }
+  await button(h.renderTasks(), '重试分析提示')()
+  await button(h.renderTasks(), '▷ 开始任务')()
+  assert.equal(h.calls.filter(c => c[0] === 'submit').length, 2)
+  assert.equal(h.calls.filter(c => c[1] === 'session.create').length, 1)
+  assert.equal(nodes(h.renderTasks()).some(n => text(n) === '重试分析提示'), false)
+})
+
+test('persisted retry checks profile, history and user draft; ambiguous attempts never resend', async () => {
+  for (const kind of ['profile', 'history', 'draft', 'attempting', 'claimed']) {
+    const task = { ...todoTask, session_id: 'saved', session_profile: kind === 'profile' ? 'other' : 'default', start_prompt_state: kind === 'attempting' || kind === 'claimed' ? kind : 'failed' }
+    const h = tasksHarness([task])
+    const writes = []
+    h.host.composer.getDraft = async id => { assert.equal(id, 'saved'); return kind === 'draft' ? 'my draft' : '' }
+    h.host.getGateway = () => ({ request: async (method, params) => {
+      assert.equal(method, 'session.resume'); assert.equal(params.profile, 'default'); assert.equal(params.session_id, 'saved')
+      return { ...emptySnapshot, ...(kind === 'history' ? { message_count: 1 } : {}) }
+    } })
+    if (kind === 'attempting' || kind === 'claimed') {
+      await h.api.startTaskSession(task, async body => writes.push(body), 'doing', true)
+    } else {
+      await assert.rejects(h.api.startTaskSession(task, async body => writes.push(body), 'doing', true))
+    }
+    assert.equal(h.calls.some(c => c[0] === 'submit'), false, kind)
+    if (kind === 'profile' || kind === 'history') assert.equal(writes.some(body => body.start_prompt_state === 'attempting'), false, kind)
+  }
+})
+
+test('draft typed during attempt persistence blocks submit and remains retryable', async () => {
+  const h = tasksHarness()
+  let draft = ''
+  const rest = h.rest
+  h.rest = async (url, options) => {
+    if (url.endsWith('/start-prompt/claim')) draft = 'new user draft'
+    return rest(url, options)
+  }
+  h.host.composer.getDraft = async () => draft
+  await button(h.renderTasks(), '▷ 开始任务')()
+  assert.equal(h.calls.some(c => c[0] === 'submit'), false)
+  assert.equal(draft, 'new user draft')
+  assert.ok(button(h.renderTasks(), '重试分析提示'))
+})
+
+test('persisted pending prompt explicitly retries linked profile and throw stays ambiguous without resend', async () => {
+  const task = { ...todoTask, session_id: 'linked', session_profile: 'work', start_prompt_state: 'pending' }
+  const h = tasksHarness([task])
+  h.state.profile.set('work')
+  h.host.getGateway = () => ({ request: async (method, params) => {
+    assert.equal(method, 'session.resume')
+    assert.equal(params.session_id, 'linked')
+    assert.equal(params.profile, 'work')
+    return emptySnapshot
+  } })
+  h.host.composer.submit = (id, text) => {
+    h.calls.push(['submit', id, text])
+    throw new Error('ambiguous dispatch')
+  }
+  await button(h.renderTasks(), '重试分析提示')()
+  assert.equal(h.calls.find(c => c[0] === 'submit')[1], 'linked')
+  assert.equal(h.calls.filter(c => c[0] === 'rest').at(-1)[1], '/tasks/10/start-prompt/claim')
+  await h.api.startTaskSession(task, async () => {}, 'doing', true)
+  assert.equal(h.calls.filter(c => c[0] === 'submit').length, 1)
+  assert.equal(nodes(h.renderTasks()).some(n => text(n) === '重试分析提示'), false)
+})
+
+ test('independent windows losing task claim never submit', async () => {
+  const clients = [tasksHarness(), tasksHarness()]
+  let claimed = false
+  for (const h of clients) {
+    const rest = h.rest
+    h.rest = async (url, options) => {
+      if (url.endsWith('/start-prompt/claim')) {
+        if (claimed) throw new Error('409: task already claimed')
+        claimed = true
+      }
+      return rest(url, options)
+    }
+  }
+  await Promise.all(clients.map(h => button(h.renderTasks(), '▷ 开始任务')()))
+  assert.equal(clients.flatMap(h => h.calls).filter(c => c[0] === 'submit').length, 1)
 })
