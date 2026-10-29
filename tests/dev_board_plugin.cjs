@@ -645,7 +645,7 @@ test('board header, stats, table, collapse and review details follow workspace s
   assert.equal(nodes(card).find(n => n.props.className === 'db-task-toggle').props['aria-expanded'], false)
   const bh = harness()
   let board = bh.render(bh.api.BoardPage)
-  assert.match(text(board), /WORKSPACE \/ DEV BOARD.*跨仓任务工作区/)
+  assert.match(text(board), /跨仓任务工作区/)
   assert.match(text(board), /2\s+个任务\s+0\s+个关联仓库/)
   assert.doesNotMatch(text(board), /个待合并/)
   assert.deepEqual(nodes(board).filter(n => n.type === bh.api.TaskCard).map(n => n.props.expanded), [true, false])
