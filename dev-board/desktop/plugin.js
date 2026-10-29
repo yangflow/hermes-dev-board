@@ -123,6 +123,9 @@ const boardStyles = `
 .dev-board.db-page .db-board-toolbar > input { background:var(--ui-bg-elevated); }
 .dev-board.db-page .db-board-toolbar > select { background:var(--ui-bg-elevated); }
 .dev-board.db-page .db-board-toolbar > button[aria-label="刷新"] { width:var(--db-control-height); padding:0; }
+.dev-board .db-candidates { display:flex; flex-direction:column; max-height:50vh; overflow:auto; min-width:0; }
+.dev-board .db-candidates button { white-space:normal; overflow-wrap:anywhere; height:auto; text-align:left; }
+.dev-board.db-dialog input { max-width:100%; min-width:0; }
 .dev-board.db-dialog { width:min(560px,92vw); max-width:92vw; }
 .dev-board.db-dialog .db-dialog-path { font-family:monospace; overflow-wrap:anywhere; color:var(--ui-text-secondary); }
 .dev-board.db-dialog .db-help-copy p { margin:0 0 12px; line-height:1.7; color:var(--ui-text-secondary); }
@@ -226,7 +229,7 @@ const boardStyles = `
 `
 const boardStyle = () => jsx('style', { children: boardStyles })
 
-const API_VERSION = 3
+const API_VERSION = 4
 const staleBackend = (data) => data && data.api_version !== API_VERSION
 const staleNotice = () => jsx(EmptyState, { title: '后端版本不匹配', description: '磁盘插件与运行中的网关 API 版本不一致。请重启加载 Dev Board 的网关，再等待自动刷新或重新加载页面；仅刷新页面不会重载后端路由。' })
 const REFRESH_MS = 15000
@@ -327,7 +330,7 @@ function ReviewLinks({ repo, showRepo = true, compact = false, repoHeader, metad
 }
 
 function useBoard() {
-  return useQuery({ queryKey: ['dev-board'], queryFn: () => rest('/board'), refetchInterval: REFRESH_MS })
+  return useQuery({ queryKey: ['dev-board'], queryFn: async () => { const data = await rest('/board?include_hidden=true'); return { ...data, hidden_repos: data.tasks.flatMap(t => t.repos.filter(r => r.hidden)), tasks: data.tasks.map(t => ({ ...t, repos: t.repos.filter(r => !r.hidden) })).filter(t => t.repos.length) } }, refetchInterval: REFRESH_MS })
 }
 function useSessions() {
   return useQuery({ queryKey: ['dev-board-sessions'], queryFn: () => rest('/zt_sessions'), refetchInterval: 60000 })
@@ -584,7 +587,7 @@ function taskIdentity(id, map = {}) {
   return title ? (title.includes(label) ? title : label + ' · ' + title) : label
 }
 
-function workspaceDialog({ open, onOpenChange, title, description, children, returnFocus }) {
+function workspaceDialog({ open, onOpenChange, title, description, children, returnFocus, footer }) {
   return jsx(Dialog, { open, onOpenChange, children: jsxs(DialogContent, {
     className: 'dev-board db-dialog',
     onCloseAutoFocus: returnFocus ? event => { event.preventDefault(); returnFocus.current?.focus() } : undefined,
@@ -592,7 +595,7 @@ function workspaceDialog({ open, onOpenChange, title, description, children, ret
       boardStyle(),
       jsxs(DialogHeader, { children: [jsx(DialogTitle, { children: title }), jsx(DialogDescription, { children: description })] }),
       children,
-      jsx(DialogFooter, { children: jsx(Button, { variant: 'secondary', onClick: () => onOpenChange(false), children: '关闭' }) })
+      jsx(DialogFooter, { children: footer || jsx(Button, { variant: 'secondary', onClick: () => onOpenChange(false), children: '关闭' }) })
     ]
   }) })
 }
@@ -636,6 +639,11 @@ function DockPanel() {
     enabled: !!activeZt
   })
   const fileDiff = useDiff(picked?.dir, picked?.path)
+  useEffect(() => {
+    if (picked && !task?.repos.some(repo => repo.dir === picked.dir)) { setPicked(null); setEnlarged(false) }
+    if (repoFilter !== 'all' && !task?.repos.some(repo => repo.dir === repoFilter)) setRepoFilter('all')
+    tc.refetch?.()
+  }, [board.data])
   useEffect(() => { setExpanded(new Set()); setPicked(null); setRepoFilter('all'); setSearch(''); setCollapsedRepos(new Set()); setEnlarged(false) }, [activeZt])
   const [help, setHelp] = useState(false)
   const helpTrigger = useRef(null)
@@ -681,10 +689,10 @@ function DockPanel() {
   if (!task) return state(taskPrefix(activeZt, sessions.data?.zt_sessions) + ' 无活跃 worktree', '可从上方选择其他任务')
   if (tc.isLoading || (!tc.data && !tc.isError)) return state('加载任务变更…')
   if (tc.isError) return state('任务变更加载失败', tc.error?.message)
-  const allFiles = tc.data?.files || []
+  const allFiles = (tc.data?.files || []).filter(file => task.repos.some(repo => repo.dir === file.dir))
   const repositories = [...new Map([
     ...task.repos.map(repo => [repo.dir, repo]),
-    ...(tc.data?.repos || []).map(repo => [repo.dir, { ...task.repos.find(r => r.dir === repo.dir), ...repo }]),
+    ...(tc.data?.repos || []).filter(repo => task.repos.some(r => r.dir === repo.dir)).map(repo => [repo.dir, { ...task.repos.find(r => r.dir === repo.dir), ...repo }]),
     ...allFiles.filter(file => !task.repos.some(r => r.dir === file.dir) && !(tc.data?.repos || []).some(r => r.dir === file.dir)).map(file => [file.dir, { repo: file.repo, dir: file.dir }])
   ]).values()]
   const filteredFiles = allFiles.filter(file => (repoFilter === 'all' || file.dir === repoFilter) && file.path.toLowerCase().includes(search.toLowerCase()))
@@ -754,7 +762,7 @@ function DockPanel() {
                   onPick: () => pick({ dir: row.dir, path: row.path, repo: row.repo }), pickedKey: picked ? picked.dir + ':' + picked.path : null
                 }, row.key)),
                 jsx('h3', { className: 'db-section', children: 'PR/MR' }),
-                jsx(ReviewLinks, { repo, compact: true, showRepo: false })
+                jsx(WorktreeActions, { repo }), jsx(ReviewLinks, { repo, compact: true, showRepo: false })
               ] })
             ] }, task.id + ':' + repo.dir)
           }),
@@ -869,6 +877,9 @@ function TaskCard({ task, activeZt, editorName = 'VS Code', expanded = true, onT
   const preferred = chips.find(s => (s.profile || 'default') === profile) || chips[0]
   const [choosing, setChoosing] = useState(false)
   const [linking, setLinking] = useState(false)
+  const [candidate, setCandidate] = useState('')
+  const [sessionSearch, setSessionSearch] = useState('')
+  const linkTrigger = useRef(null)
   const [busy, setBusy] = useState(false)
   const [linked, setLinked] = useState(null)
   const run = async fn => { if (busy) return; setBusy(true); try { await fn() } catch (error) { host.notify({ kind: 'error', message: error.message || String(error) }) } finally { setBusy(false) } }
@@ -895,20 +906,33 @@ function TaskCard({ task, activeZt, editorName = 'VS Code', expanded = true, onT
       summary.needs ? pill('需要处理', 'warn') : summary.done ? pill('已全部合并', 'good') : summary.known ? pill(summary.reviews.length ? summary.pending + ' 个待合并' : '无关联审阅', summary.reviews.length ? 'warn' : 'muted') : pill('合并进度未知'),
       jsxs('div', { className: 'db-task-actions', children: [
         !preferred && !linked ? jsxs('span', { className: 'db-task-actions', children: [
-          jsx(Button, { variant: 'ghost', size: 'sm', disabled: busy || sessions.isLoading || sessions.isError || !sessions.data, onClick: () => setLinking(!linking), children: '关联已有会话' }),
+          jsx(Button, { variant: 'ghost', size: 'sm', disabled: busy || sessions.isLoading || sessions.isError || !sessions.data, onClick: event => { linkTrigger.current = event?.currentTarget; setCandidate(''); setSessionSearch(''); setLinking(true) }, children: '关联已有会话' }),
           jsx(Button, { variant: 'ghost', size: 'sm', disabled: busy || sessions.isLoading || sessions.isError || !sessions.data, onClick: () => run(() => createTaskSession(task, sessions.refetch)), children: '创建会话' })
         ] }) : null,
-        linking && !preferred && !linked ? jsx(Select, { value: '', disabled: busy, onValueChange: value => run(async () => {
-          const selected = candidates.find(s => JSON.stringify([s.profile, s.id]) === value)
-          if (!selected) throw new Error('请选择列表中的会话')
-          const result = await rest('/task_session', { method: 'POST', body: { task: task.id, action: 'link', id: selected.id, profile: selected.profile } })
-          if (!result?.ok || !result.link) throw new Error(result?.detail || '保存会话关联失败')
-          setLinked(result.link); setLinking(false); await sessions.refetch?.()
-        }), children: [jsx(SelectTrigger, { children: jsx(SelectValue, { placeholder: candidates.length ? '选择已有会话' : '暂无可关联会话' }) }), jsx(SelectContent, { children: candidates.map(s => jsx(SelectItem, { value: JSON.stringify([s.profile, s.id]), children: s.profile + ' · ' + (s.title || s.id) }, JSON.stringify([s.profile, s.id]))) })] }) : null,
-        linked && !preferred ? jsx(Button, { variant: 'ghost', size: 'sm', onClick: () => openTaskSession(linked), children: '▷ 打开会话' }) : null,
+        linking && !preferred && !linked ? workspaceDialog({ open: true, onOpenChange: setLinking, returnFocus: linkTrigger,
+          title: '关联已有会话', description: '搜索并选择准确的 profile / session ID，然后确认。取消不会保存。',
+          children: jsxs('div', { children: [
+            jsx('input', { autoFocus: true, type: 'search', className: 'db-search', 'aria-label': '搜索会话', value: sessionSearch, onChange: event => setSessionSearch(event.target.value) }),
+            jsx('div', { className: 'db-candidates', children: candidates.filter(s => [s.title, s.id, s.profile].join(' ').toLowerCase().includes(sessionSearch.toLowerCase())).map(s => jsx(Button, {
+              variant: candidate === JSON.stringify([s.profile, s.id]) ? 'secondary' : 'ghost',
+              'aria-pressed': candidate === JSON.stringify([s.profile, s.id]), onClick: () => setCandidate(JSON.stringify([s.profile, s.id])),
+              children: (s.title || '无标题') + ' · ' + s.profile + ' · ' + s.id
+            }, JSON.stringify([s.profile, s.id]))) })
+          ] }),
+          footer: jsxs('div', { children: [jsx(Button, { variant: 'secondary', onClick: () => setLinking(false), children: '取消' }), jsx(Button, {
+            disabled: busy || !candidates.some(s => JSON.stringify([s.profile, s.id]) === candidate), children: '确认关联', onClick: () => run(async () => {
+              const selected = candidates.find(s => JSON.stringify([s.profile, s.id]) === candidate)
+              if (!selected) throw new Error('请选择列表中的会话')
+              const result = await rest('/task_session', { method: 'POST', body: { task: task.id, action: 'link', id: selected.id, profile: selected.profile } })
+              if (!result?.ok || !result.link) throw new Error(result?.detail || '保存会话关联失败')
+              setLinked(result.link); setLinking(false); await sessions.refetch?.()
+            })
+          })] })
+        }) : null,
+        linked && !preferred ? jsx(Button, { ref: linkTrigger, variant: 'ghost', size: 'sm', onClick: () => openTaskSession(linked), children: '▷ 打开会话' }) : null,
         preferred?.prompt_state === 'attempting' ? jsx('span', { className: 'db-meta', children: '分析提示已尝试发送，请在会话中确认' }) : null,
         preferred?.prompt_state === 'pending' ? jsx(Button, { variant: 'ghost', size: 'sm', disabled: busy, onClick: () => run(() => createTaskSession(task, sessions.refetch)), children: '重试分析提示' }) : null,
-        preferred ? jsx(Button, { variant: 'ghost', size: 'sm', title: '打开会话', 'aria-expanded': chips.length > 1 ? choosing : undefined, onClick: () => chips.length > 1 ? setChoosing(!choosing) : openTaskSession(preferred), children: '▷ 打开会话' }) : null,
+        preferred ? jsx(Button, { ref: linkTrigger, variant: 'ghost', size: 'sm', title: '打开会话', 'aria-expanded': chips.length > 1 ? choosing : undefined, onClick: () => chips.length > 1 ? setChoosing(!choosing) : openTaskSession(preferred), children: '▷ 打开会话' }) : null,
           choosing && chips.length > 1 ? jsx(Select, { value: '', onValueChange: (value) => {
             const s = chips.find((s) => JSON.stringify([s.profile || 'default', s.id]) === value)
             if (s) { setChoosing(false); return openTaskSession(s) }
@@ -928,7 +952,7 @@ function TaskCard({ task, activeZt, editorName = 'VS Code', expanded = true, onT
         const reviews = data?.reviews || []
         return jsxs('tbody', { children: [
           jsxs('tr', { children: [
-            jsxs('td', { 'data-label': '仓库', children: [jsx('strong', { className: 'db-repo-name', title: r.dir, children: r.repo }), r.dirty > 0 ? jsx('span', { className: 'db-dirty', children: '● ' + r.dirty + ' 未提交' }) : null] }),
+            jsxs('td', { 'data-label': '仓库', children: [jsx('strong', { className: 'db-repo-name', title: r.dir, children: r.repo }), jsx(WorktreeActions, { repo: r }), r.dirty > 0 ? jsx('span', { className: 'db-dirty', children: '● ' + r.dirty + ' 未提交' }) : null] }),
             jsxs('td', { 'data-label': '分支 + 最新提交', children: [jsx('div', { className: 'db-branch', title: r.branch || '(detached)', children: r.branch || '(detached)' }), jsxs('div', { className: 'db-commit', title: r.last || '—', children: [jsx('span', { className: 'db-hash', children: (r.last || '—').split(' ')[0] }), ' ' + (r.last || '').split(' ').slice(1).join(' ')] })] }),
             jsx('td', { 'data-label': '合并请求', children: reviews.length ? reviews.map(v => jsx('button', { type: 'button', className: 'db-table-link', title: v.title, onClick: () => openReview(v.url), children: (v.provider === 'gitlab' ? '!' : '#') + v.number + ' ↗' }, v.url)) : '—' }),
             jsx('td', { 'data-label': '目标分支', className: 'db-target', children: reviews.length ? [...new Set(reviews.map(v => v.target_branch))].map(v => jsx('div', { title: v, children: '↳ ' + v }, v)) : '—' }),
@@ -978,7 +1002,7 @@ function BoardPage() {
     jsxs('div', { className: 'db-board-content', children: [
       jsxs('header', { className: 'db-page-header', children: [
         jsxs('div', { children: [jsx('div', { className: 'db-eyebrow', children: 'WORKSPACE / DEV BOARD' }), jsx('h1', { children: '跨仓任务工作区' }), jsx('p', { children: '集中查看任务、关联仓库与合并进度。' })] }),
-        jsx(Button, { variant: 'secondary', size: 'sm', onClick: () => openDock(sessions.data?.zt_sessions || {}), children: '在会话右侧打开' })
+        jsx(RestoreWorktrees, { repos: board.data?.hidden_repos || [], refresh: board.refetch }), jsx(Button, { variant: 'secondary', size: 'sm', onClick: () => openDock(sessions.data?.zt_sessions || {}), children: '在会话右侧打开' })
       ] }),
       jsxs('div', { className: 'db-toolbar db-board-toolbar', children: [
         jsx('input', { type: 'search', className: 'db-search', 'aria-label': '搜索任务', placeholder: '搜索任务、仓库或 PR/MR…', value: search, onChange: e => setSearch(e.target.value) }),
@@ -1028,4 +1052,44 @@ export default {
       }
     })
   }
+}
+
+
+function WorktreeActions({ repo }) {
+  const board = useBoard()
+  const [open, setOpen] = useState(false)
+  const [deleteDirectory, setDeleteDirectory] = useState(false)
+  const [identity, setIdentity] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const trigger = useRef(null)
+  const submit = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      const result = await rest('/worktree', { method: 'POST', body: { dir: repo.dir, action: identity ? 'remove' : deleteDirectory ? 'preview' : 'hide', ...(identity || {}) } })
+      if (deleteDirectory && !identity) { setIdentity(result); return }
+      if (!result?.ok) throw new Error(result?.detail || '操作失败')
+      setOpen(false); await board.refetch?.()
+    } catch (error) { host.notify({ kind: 'error', message: error.message || String(error) }) }
+    finally { setBusy(false) }
+  }
+  return jsxs('span', { children: [jsx(Button, { variant: 'ghost', size: 'sm', onClick: event => { trigger.current = event?.currentTarget; setDeleteDirectory(false); setIdentity(null); setOpen(true) }, children: '移除 Worktree' }),
+    open ? workspaceDialog({ open, onOpenChange: setOpen, returnFocus: trigger, title: identity ? '再次确认删除目录' : '移除 Worktree',
+      description: '默认只持久隐藏，可恢复。隐藏不会阻止 cron 自动清理。',
+      children: identity ? jsxs('div', { children: [jsx('p', { className: 'db-dialog-path', children: identity.dir }), jsx('p', { className: 'db-dialog-path', children: identity.branch }), jsx('p', { className: 'db-dialog-path', children: identity.head })] }) : jsx('label', { children: [jsx('input', { type: 'checkbox', checked: deleteDirectory, onChange: event => setDeleteDirectory(event.target.checked) }), '同时删除本地目录（需要再次确认）'] }),
+      footer: jsxs('div', { children: [jsx(Button, { variant: 'secondary', onClick: () => setOpen(false), children: '取消' }), jsx(Button, { disabled: busy, onClick: submit, children: identity ? '确认删除目录' : deleteDirectory ? '下一步' : '确认隐藏' })] })
+    }) : null] })
+}
+
+function RestoreWorktrees({ repos, refresh }) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const trigger = useRef(null)
+  return jsxs('span', { children: [jsx(Button, { variant: 'secondary', size: 'sm', onClick: event => { trigger.current = event?.currentTarget; setOpen(true) }, children: '恢复隐藏仓库' }),
+    open ? workspaceDialog({ open, onOpenChange: setOpen, returnFocus: trigger, title: '恢复隐藏仓库', description: '隐藏不会阻止 cron 自动清理。', children: jsx('div', { className: 'db-candidates', children: repos.length ? repos.map(repo => jsx(Button, { variant: 'secondary', disabled: busy, children: repo.dir, onClick: async () => {
+      setBusy(true)
+      try { const result = await rest('/worktree', { method: 'POST', body: { dir: repo.dir, action: 'restore' } }); if (!result?.ok) throw new Error('恢复失败'); await refresh?.() }
+      catch (error) { host.notify({ kind: 'error', message: error.message || String(error) }) }
+      finally { setBusy(false) }
+    } }, repo.dir)) : '暂无隐藏仓库' }) }) : null] })
 }

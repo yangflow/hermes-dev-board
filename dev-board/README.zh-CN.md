@@ -153,3 +153,11 @@ export DEV_BOARD_TITLE_RE='(\d{2,6})'
 
 [MIT](../LICENSE)，版权归 yangflow 所有。
 
+
+## 隐藏、恢复与安全移除（API v4）
+
+每个仓库的 **移除 Worktree** 打开 SDK 弹窗，默认只持久隐藏；**恢复隐藏仓库** 可恢复显示。隐藏记录原子保存在 `$HERMES_HOME/dev-board/hidden-worktrees.json`。**隐藏不会阻止 cron 自动清理**。`GET /board` 默认 `include_hidden=true`，保留工作流快照中的隐藏仓库；`include_hidden=false` 过滤它们，仓库字段新增 `hidden` 和完整 `head`。本地 workflow-maintenance 快照已读取 `/board`，不需要修改本地脚本。
+
+“同时删除本地目录”默认不勾选，勾选后必须再次确认完整路径、分支、HEAD。`POST /worktree` 支持 `hide/restore/preview/remove`，删除须提交 preview 返回的 `dir/branch/head`。后端重新验证允许根目录的直接子目录、已注册 linked worktree（绝不删除主 worktree），拒绝符号链接、锁定、游离/保护分支、脏文件和未跟踪文件、过期确认。必须全新 fetch 已配置的 origin，确认远端默认分支已知，且 HEAD 已推送到 origin 同名分支；远端缺失或失败均拒绝。保护范围包括 main/master/trunk/develop/dev/test/staging/production、release/*、hotfix/*、主 worktree 分支、origin 默认分支，以及本地重复配置 `git config --add devboard.protectedBranch <分支名>`。Git 不提供托管平台保护规则，额外保护分支须同步到此本地配置。仅执行 `git worktree remove`，不强制删除、不递归清理、不删分支；失败保留记录。
+
+**关联已有会话** 使用 SDK 搜索弹窗，按标题、ID、profile 搜索，明确选择后点击 **确认关联**；取消不写入。创建会话行为不变。

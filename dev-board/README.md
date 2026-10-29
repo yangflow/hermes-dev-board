@@ -163,3 +163,11 @@ rm -rf ~/.hermes/plugins/dev-board ~/.hermes/desktop-plugins/dev-board
 ## License
 
 MIT
+
+## Hide, restore and safely remove worktrees (API v4)
+
+Each repository has **移除 Worktree**. Its SDK dialog defaults to persistent hide only; **恢复隐藏仓库** restores it. Hidden paths are stored atomically under `$HERMES_HOME/dev-board/hidden-worktrees.json`. Hiding **does not protect against cron cleanup**. Workflow snapshots retain hidden repositories: `GET /board` defaults to `include_hidden=true`; `include_hidden=false` filters them, and each repository exposes `hidden` and full `head`. The local workflow-maintenance snapshot already reads `/board`, so no local script changes are needed.
+
+The unchecked delete-directory option requires a second confirmation of exact path, branch and full HEAD. `POST /worktree` supports `hide`, `restore`, `preview`, `remove`; removal requires the preview's `dir`, `branch`, `head`. The backend rechecks registered linked worktrees directly under allowed roots, rejects main worktrees, symlinks, locks, detached/protected branches, dirty/untracked files and stale confirmations. It fetches configured `origin` freshly, requires a known remote default branch and the source HEAD to be pushed to the same origin branch. Missing/failed remotes fail closed. Protected names are main/master/trunk/develop/dev/test/staging/production, release/*, hotfix/*, the main worktree's branch, origin's default branch, and repeated local `git config --add devboard.protectedBranch <name>` values. Git does not expose hosting-service branch protection; mirror additional protected names in that local setting. Only `git worktree remove` runs: no force, recursive removal or branch deletion. Failures preserve records.
+
+**关联已有会话** opens a searchable SDK dialog (title, ID, profile). Select an exact candidate, then **确认关联**; cancellation writes nothing. Session creation behavior is unchanged.

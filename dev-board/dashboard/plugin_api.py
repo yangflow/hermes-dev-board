@@ -37,7 +37,7 @@ from urllib.parse import quote, urlencode, urlsplit
 from fastapi import APIRouter, Body, HTTPException, Query
 
 router = APIRouter()
-API_VERSION = 3
+API_VERSION = 4
 
 _review_cache = OrderedDict()
 _review_cache_lock = threading.Lock()
@@ -371,14 +371,20 @@ def _editor_name() -> str:
 
 
 @router.get("/board")
-def board() -> dict:
+def board(include_hidden: bool = True) -> dict:
+    with _session_store("hidden-worktrees.json") as stored:
+        hidden = dict(stored)
     tasks: dict[str, list] = {}
     for d, zt, suffix in _task_worktrees():
+        if not include_hidden and str(d) in hidden:
+            continue
         status = _run(["git", "status", "--porcelain"], d)
         tasks.setdefault(zt, []).append(
             {
                 "repo": d.name[: -len(suffix)],
                 "dir": str(d),
+                "hidden": str(d) in hidden,
+                "head": _run(["git", "rev-parse", "HEAD"], d),
                 "branch": _run(["git", "branch", "--show-current"], d),
                 "dirty": len([l for l in status.splitlines() if l.strip()]),
                 "last": _run(["git", "log", "-1", "--format=%h %s"], d),
@@ -468,8 +474,8 @@ def _session_catalog() -> dict:
 
 
 @contextmanager
-def _session_store():
-    path = Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))).expanduser() / "dev-board/task-sessions.json"
+def _session_store(filename="task-sessions.json"):
+    path = Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))).expanduser() / "dev-board" / filename
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path.with_suffix(".lock"), "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -537,10 +543,12 @@ def update_task_session(body: dict = Body(...)) -> dict:
 
 @router.get("/task_changes")
 def task_changes(task: str = Query(...)) -> dict:
+    with _session_store("hidden-worktrees.json") as stored:
+        hidden = set(stored)
     files: list[dict] = []
     repos: list[dict] = []
     for d, zt, suffix in _task_worktrees():
-        if zt != task:
+        if zt != task or str(d) in hidden:
             continue
         repo = d.name[: -len(suffix)]
         repos.append({"repo": repo, "dir": str(d), "dirty": 0})
@@ -638,3 +646,71 @@ def open_editor(task: str = Query(...)) -> dict:
         raise HTTPException(status_code=500, detail=(exc.stderr or exc.stdout or f"editor exited with code {exc.returncode}").strip())
     except (OSError, ValueError) as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+def _checked_git(d, *args):
+    try:
+        result = subprocess.run(["git", *args], cwd=d, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        raise HTTPException(409, "Git validation failed")
+    if result.returncode:
+        raise HTTPException(409, "Git operation refused: " + args[0])
+    return result.stdout.strip()
+
+
+def _removal_identity(raw):
+    p = Path(raw).expanduser().absolute()
+    if not any(p.parent == r.absolute() and not r.is_symlink() and r.absolute() == r.resolve() for r in _roots()):
+        raise HTTPException(403, "requires immediate allowed root without symlinks")
+    if p.is_symlink() or p != p.resolve() or (p / ".git").is_symlink():
+        raise HTTPException(403, "symlink worktree refused")
+    records = _checked_git(p, "worktree", "list", "--porcelain").split("\n\n")
+    match = next((r.splitlines() for r in records if r.splitlines() and r.splitlines()[0] == "worktree " + str(p)), None)
+    if not match or match == records[0].splitlines() or not (p / ".git").is_file():
+        raise HTTPException(409, "requires registered linked worktree, never main")
+    if any(l == "locked" or l.startswith("locked ") for l in match):
+        raise HTTPException(409, "locked worktree")
+    branch = _checked_git(p, "branch", "--show-current")
+    protected = {"main", "master", "trunk", "develop", "dev", "test", "staging", "production"}
+    protected.update(line.removeprefix("branch refs/heads/") for line in records[0].splitlines() if line.startswith("branch refs/heads/"))
+    protected.update(_run(["git", "config", "--get-all", "devboard.protectedBranch"], p).splitlines())
+    if not branch or branch in protected or branch.startswith(("release/", "hotfix/")):
+        raise HTTPException(409, "detached or protected branch")
+    return p, branch, _checked_git(p, "rev-parse", "HEAD")
+
+
+@router.post("/worktree")
+def update_worktree(body: dict = Body(...)) -> dict:
+    raw, action = body.get("dir"), body.get("action")
+    if not isinstance(raw, str) or action not in ("hide", "restore", "preview", "remove"):
+        raise HTTPException(400, "invalid worktree action")
+    if action in ("preview", "remove"):
+        p, branch, head = _removal_identity(raw)
+        identity = {"dir": str(p), "branch": branch, "head": head}
+        if action == "preview":
+            return identity
+        if any(body.get(k) != v for k, v in identity.items()):
+            raise HTTPException(409, "stale path/branch/HEAD confirmation")
+        if _checked_git(p, "status", "--porcelain", "--untracked-files=all"):
+            raise HTTPException(409, "dirty or untracked files")
+        _checked_git(p, "remote", "get-url", "origin")
+        _checked_git(p, "fetch", "--prune", "origin", "+refs/heads/*:refs/remotes/origin/*")
+        advertised = _checked_git(p, "ls-remote", "--symref", "origin", "HEAD")
+        default = next((line.split("\t")[0].removeprefix("ref: refs/heads/") for line in advertised.splitlines() if line.startswith("ref: refs/heads/")), None)
+        if not default or branch == default:
+            raise HTTPException(409, "unknown or protected origin default branch")
+        remote = "refs/remotes/origin/" + branch
+        _checked_git(p, "rev-parse", "--verify", remote)
+        _checked_git(p, "merge-base", "--is-ancestor", head, remote)
+        if _removal_identity(raw) != (p, branch, head) or _checked_git(p, "status", "--porcelain", "--untracked-files=all"):
+            raise HTTPException(409, "worktree changed during validation")
+        _checked_git(p.parent, "-C", str(p), "worktree", "remove", "--", str(p))
+        return {"ok": True}
+    if raw not in {str(d) for d, _, _ in _task_worktrees()}:
+        raise HTTPException(404, "worktree not discovered")
+    with _session_store("hidden-worktrees.json") as data:
+        if action == "hide":
+            data[raw] = True
+        else:
+            data.pop(raw, None)
+    return {"ok": True}

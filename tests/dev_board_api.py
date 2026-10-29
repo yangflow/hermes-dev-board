@@ -409,3 +409,149 @@ class PluginApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WorktreeRemovalTests(unittest.TestCase):
+    setUp = PluginApiTests.setUp
+    repo = PluginApiTests.repo
+
+    def linked_repo(self):
+        main = self.repo('main-9100')
+        origin = self.root / 'origin.git'
+        self.git(main, 'init', '--bare', str(origin))
+        self.git(main, 'remote', 'add', 'origin', str(origin))
+        self.git(main, 'push', '-u', 'origin', 'HEAD')
+        linked = self.worktrees / 'service-9200'
+        self.git(main, 'worktree', 'add', '-b', 'feat/remove', str(linked))
+        self.git(linked, 'push', '-u', 'origin', 'HEAD')
+        return main, linked
+
+    def git(self, cwd, *args):
+        return subprocess.run(['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+                               '-c', 'commit.gpgsign=false', *args], cwd=cwd, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    def mutation(self, d, action, **extra):
+        return self.client.post('/worktree', json={'dir': str(d), 'action': action, **extra})
+
+    def test_safe_remove_preserves_branch_and_records(self):
+        main, d = self.linked_repo()
+        self.assertEqual(self.mutation(d, 'hide').status_code, 200)
+        identity = self.mutation(d, 'preview').json()
+        self.assertEqual(self.mutation(d, 'remove', branch=identity['branch'], head=identity['head']).status_code, 200)
+        self.assertFalse(d.exists())
+        self.git(main, 'show-ref', '--verify', 'refs/heads/feat/remove')
+        with api._session_store('hidden-worktrees.json') as data:
+            self.assertTrue(data[str(d)])
+
+    def test_hide_restore_and_snapshot_include_hidden(self):
+        _, d = self.linked_repo()
+        self.assertEqual(self.mutation(d, 'hide').status_code, 200)
+        self.assertTrue(d.exists())
+        self.assertTrue(any(r['hidden'] for t in self.client.get('/board').json()['tasks'] for r in t['repos'] if r['dir'] == str(d)))
+        self.assertFalse(any(r['dir'] == str(d) for t in self.client.get('/board?include_hidden=false').json()['tasks'] for r in t['repos']))
+        self.assertEqual(self.client.get('/task_changes?task=9200').json()['repos'], [])
+        self.assertEqual(self.mutation(d, 'restore').status_code, 200)
+        self.assertTrue(any(r['dir'] == str(d) for t in self.client.get('/board?include_hidden=false').json()['tasks'] for r in t['repos']))
+
+    def test_refuses_unsafe_removals(self):
+        main, d = self.linked_repo()
+        original = self.mutation(d, 'preview').json()
+        def refused(path=d, identity=original):
+            response = self.mutation(path, 'remove', branch=identity['branch'], head=identity['head'])
+            self.assertIn(response.status_code, (403, 409), response.text)
+            self.assertTrue(d.exists())
+        refused(main)
+        (d / 'adminapi/views.py').write_text('dirty\n')
+        refused()
+        self.git(d, 'checkout', '--', '.')
+        (d / 'untracked').write_text('keep')
+        refused()
+        (d / 'untracked').unlink()
+        self.git(main, 'worktree', 'lock', str(d))
+        refused()
+        self.git(main, 'worktree', 'unlock', str(d))
+        alias = self.worktrees / 'alias-9300'
+        alias.symlink_to(d, target_is_directory=True)
+        refused(alias)
+        refused(identity={**original, 'head': '0' * 40})
+        self.git(d, 'branch', '-m', 'feat/renamed')
+        refused()
+        self.git(d, 'branch', '-m', 'feat/remove')
+        self.git(d, 'commit', '--allow-empty', '-m', 'not pushed')
+        fresh = self.mutation(d, 'preview').json()
+        refused(identity=fresh)
+        self.git(d, 'push', 'origin', 'HEAD')
+        self.git(d, 'checkout', '--detach')
+        refused(identity=fresh)
+
+    def test_missing_remote_and_remote_branch_refuse(self):
+        _, d = self.linked_repo()
+        identity = self.mutation(d, 'preview').json()
+        self.git(d, 'push', 'origin', '--delete', 'feat/remove')
+        response = self.mutation(d, 'remove', branch=identity['branch'], head=identity['head'])
+        self.assertEqual(response.status_code, 409)
+        self.git(d, 'remote', 'remove', 'origin')
+        response = self.mutation(d, 'remove', branch=identity['branch'], head=identity['head'])
+        self.assertEqual(response.status_code, 409)
+        self.assertTrue(d.exists())
+
+    def test_protected_and_remote_default_branches_refuse(self):
+        _, d = self.linked_repo()
+        self.git(d, 'branch', '-m', 'trunk')
+        self.assertEqual(self.mutation(d, 'preview').status_code, 409)
+        self.git(d, 'branch', '-m', 'custom-default')
+        self.git(d, 'push', 'origin', 'HEAD')
+        self.git(self.root, '--git-dir=' + str(self.root / 'origin.git'), 'symbolic-ref', 'HEAD', 'refs/heads/custom-default')
+        identity = self.mutation(d, 'preview').json()
+        response = self.mutation(d, 'remove', branch=identity['branch'], head=identity['head'])
+        self.assertEqual(response.status_code, 409)
+        self.assertTrue(d.exists())
+        self.git(d, 'config', '--add', 'devboard.protectedBranch', 'custom-default')
+        self.assertEqual(self.mutation(d, 'preview').status_code, 409)
+
+    def test_symlink_gitfile_root_and_nested_path_refuse(self):
+        _, d = self.linked_repo()
+        identity = self.mutation(d, 'preview').json()
+        gitfile = d / '.git'
+        saved = self.root / 'gitfile'
+        gitfile.rename(saved)
+        gitfile.symlink_to(saved)
+        self.assertEqual(self.mutation(d, 'preview').status_code, 403)
+        gitfile.unlink()
+        saved.rename(gitfile)
+        alias = self.root / 'alias-root'
+        alias.symlink_to(self.worktrees, target_is_directory=True)
+        with patch.dict(os.environ, {'DEV_BOARD_WORKTREE_ROOTS': str(alias)}):
+            self.assertEqual(self.mutation(alias / d.name, 'preview').status_code, 403)
+        nested = self.worktrees / 'nested'
+        nested.mkdir()
+        self.git(d, 'worktree', 'add', '-b', 'feat/nested', str(nested / 'repo-9400'))
+        self.assertEqual(self.mutation(nested / 'repo-9400', 'preview').status_code, 403)
+        self.assertEqual(self.mutation(d, 'preview').json(), identity)
+
+    def test_failed_removal_preserves_hidden_and_session_records(self):
+        _, d = self.linked_repo()
+        self.mutation(d, 'hide')
+        with api._session_store() as data:
+            data['9200'] = {'id': 'fixture-session', 'profile': 'dev'}
+        before = {p.name: p.read_bytes() for p in (self.home / 'dev-board').glob('*.json')}
+        identity = self.mutation(d, 'preview').json()
+        (d / 'untracked').write_text('keep')
+        self.assertEqual(self.mutation(d, 'remove', branch=identity['branch'], head=identity['head']).status_code, 409)
+        self.assertEqual(before, {p.name: p.read_bytes() for p in (self.home / 'dev-board').glob('*.json')})
+        self.assertTrue((d / 'untracked').exists())
+
+    def test_missing_origin_cannot_fall_back_to_local_directory(self):
+        _, d = self.linked_repo()
+        identity = self.mutation(d, 'preview').json()
+        self.git(d, 'remote', 'remove', 'origin')
+        # A local path is a valid fetch source, but not an explicitly configured origin.
+        self.git(d, 'clone', '--bare', str(self.root / 'origin.git'), str(d / 'origin'))
+        (d / '.gitignore').write_text('origin/\n')
+        self.git(d, 'add', '.gitignore')
+        self.git(d, 'commit', '-m', 'ignore fixture')
+        self.git(d, 'push', str(d / 'origin'), 'HEAD:refs/heads/feat/remove')
+        identity = self.mutation(d, 'preview').json()
+        self.assertEqual(self.mutation(d, 'remove', branch=identity['branch'], head=identity['head']).status_code, 409)
+        self.assertTrue(d.exists())

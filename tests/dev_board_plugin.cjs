@@ -23,7 +23,7 @@ function harness() {
   }
   const session = { id: 'stored', title: 'ZT-1234 task', label: 'ZT-1234', profile: 'dev' }
   const results = {
-    'dev-board': { data: { api_version: 3, tasks: [{ id: '1234', repos: [] }, { id: '5678', repos: [] }] } },
+    'dev-board': { data: { api_version: 4, tasks: [{ id: '1234', repos: [] }, { id: '5678', repos: [] }] } },
     'dev-board-sessions': { data: { zt_sessions: { 1234: [session] } } },
     'dev-board-task-changes': { data: { files: [], repos: [] } },
     'dev-board-diff': { data: { diff: '@@ -1 +1 @@\n-old backend line\n+new backend line\n' } }
@@ -78,7 +78,7 @@ function harness() {
   })
   const source = fs.readFileSync(path.join(__dirname, '../dev-board/desktop/plugin.js'), 'utf8')
     .replace(/^import .*\n/gm, '').replace('export default {', 'globalThis.plugin = {')
-  vm.runInContext("'use strict';\n" + source + '\nglobalThis.api = { useActiveZt, DockPanel, TaskCard, SessionChip, BoardPage, ReviewLinks, useReviews, openReview, FileCompare, buildSideBySide, DiffView };', context)
+  vm.runInContext("'use strict';\n" + source + '\nglobalThis.api = { useActiveZt, DockPanel, TaskCard, SessionChip, BoardPage, ReviewLinks, useReviews, openReview, FileCompare, buildSideBySide, DiffView, WorktreeActions, RestoreWorktrees };', context)
   const h = {
     api: context.api, state, session, host, notices, calls, queries, results, registrations, workspaces, windowEvents,
     unload() { cleanups.forEach((fn) => fn()) },
@@ -478,6 +478,7 @@ test('unload during session activation cannot resurrect the pane', async () => {
 
 test('all repositories retain identical file paths as distinct selectable identities', () => {
   const h = harness()
+  h.results['dev-board'].data.tasks[0].repos = ['api', 'web'].map(repo => ({ repo, dir: '/worktrees/' + repo }))
   h.results['dev-board-task-changes'].data.files = ['api', 'web'].map((repo) => ({
     repo, dir: '/worktrees/' + repo, path: 'same.py', status: 'M', added: 1, removed: 0
   }))
@@ -538,7 +539,7 @@ test('single open action toggles full profile session choices without opening a 
   assert.match(h.notices.at(-1).message, /打开会话失败：profile unavailable/)
 })
  test('stale backend notice explains gateway reload in board and dock', () => {
-  for (const version of [undefined, 1, 2, 4]) {
+  for (const version of [undefined, 1, 2, 3]) {
     for (const component of ['BoardPage', 'DockPanel']) {
       const h = harness()
       h.results['dev-board'].data.api_version = version
@@ -1125,9 +1126,14 @@ test('explicit picker uses candidate identity, persists owner, opens and follows
   }
   const render = () => h.render(h.api.TaskCard, { task: { id: '1234', repos: [] } })
   await button(render(), '关联已有会话')()
-  const picker = nodes(render()).find(n => n.type === 'Select')
-  assert.equal(nodes(render()).filter(n => n.type === 'SelectItem').length, 2)
-  await picker.props.onValueChange(JSON.stringify(['dev', 'same']))
+  assert.ok(nodes(render()).some(n => n.type === 'Dialog'))
+  const search = nodes(render()).find(n => n.props['aria-label'] === '搜索会话')
+  search.props.onChange({ target: { value: 'default' } })
+  assert.ok(!nodes(render()).some(n => n.type === 'Button' && text(n) === 'no task id · dev · same'))
+  nodes(render()).find(n => n.props['aria-label'] === '搜索会话').props.onChange({ target: { value: 'same' } })
+  await button(render(), 'no task id · dev · same')()
+  assert.equal(nodes(render()).find(n => n.type === 'Button' && text(n) === '确认关联').props.disabled, false)
+  await button(render(), '确认关联')()
   assert.ok(!nodes(render()).some(n => n.type === 'Button' && text(n).includes('创建会话')))
   await button(render(), '打开会话')()
   assert.deepEqual(plain(h.calls.at(-1)), ['session', 'same', { profile: 'dev', keepAllProfilesScope: false }])
@@ -1217,4 +1223,71 @@ test('create response loss reuses native request identity; nonempty session and 
       assert.ok(button(h.renderCard(), '重试分析提示'))
     }
   }
+})
+
+
+test('session dialog cancel writes nothing, resets explicit selection and returns focus', async () => {
+  const h = harness()
+  h.results['dev-board-sessions'].data = { zt_sessions: {}, candidates: [{ id: 'a', profile: 'dev', title: 'A' }] }
+  const render = () => h.render(h.api.TaskCard, { task: { id: '1234', repos: [] } })
+  let focused = false
+  await button(render(), '关联已有会话')({ currentTarget: { focus() { focused = true } } })
+  assert.equal(nodes(render()).find(n => n.type === 'Button' && text(n) === '确认关联').props.disabled, true)
+  await button(render(), 'A · dev · a')()
+  const content = nodes(render()).find(n => n.type === 'DialogContent')
+  await button(render(), '取消')()
+  content.props.onCloseAutoFocus({ preventDefault() {} })
+  assert.equal(focused, true)
+  assert.equal(h.calls.length, 0)
+  await button(render(), '关联已有会话')()
+  assert.equal(nodes(render()).find(n => n.type === 'Button' && text(n) === '确认关联').props.disabled, true)
+})
+
+test('worktree removal defaults to hide, delete requires exact identity second confirmation', async () => {
+  const h = harness(), writes = []
+  const repo = { dir: '/allowed/repo-1234', branch: 'feat/task', head: 'abcdef' }
+  h.rest = async (url, options) => { writes.push(plain(options.body)); return options.body.action === 'preview' ? repo : { ok: true } }
+  const render = () => h.render(h.api.WorktreeActions, { repo })
+  await button(render(), '移除 Worktree')()
+  assert.equal(nodes(render()).find(n => n.props.type === 'checkbox').props.checked, false)
+  assert.match(text(render()), /隐藏不会阻止 cron/)
+  await button(render(), '取消')()
+  assert.equal(writes.length, 0)
+  await button(render(), '移除 Worktree')()
+  await button(render(), '确认隐藏')()
+  assert.equal(writes[0].action, 'hide')
+  await button(render(), '移除 Worktree')()
+  nodes(render()).find(n => n.props.type === 'checkbox').props.onChange({ target: { checked: true } })
+  await button(render(), '下一步')()
+  assert.equal(writes.at(-1).action, 'preview')
+  assert.match(text(render()), /abcdef/)
+  await button(render(), '确认删除目录')()
+  assert.deepEqual(writes.at(-1), { ...repo, action: 'remove' })
+})
+
+test('restore hidden dialog uses exact directory and refreshes after success', async () => {
+  const h = harness(), writes = []
+  let refreshed = 0
+  h.rest = async (url, options) => { writes.push(plain(options.body)); return { ok: true } }
+  const render = () => h.render(h.api.RestoreWorktrees, { repos: [{ dir: '/root/a-1234' }], refresh: async () => refreshed++ })
+  await button(render(), '恢复隐藏仓库')()
+  await button(render(), '/root/a-1234')()
+  assert.deepEqual(writes, [{ dir: '/root/a-1234', action: 'restore' }])
+  assert.equal(refreshed, 1)
+})
+
+
+test('dock drops cached files and selection when a repository is hidden or removed', () => {
+  const h = harness()
+  const repos = ['api', 'web'].map(repo => ({ repo, dir: '/worktrees/' + repo }))
+  h.results['dev-board'].data.tasks[0].repos = repos
+  h.results['dev-board-task-changes'].data = { repos, files: repos.map(r => ({ ...r, path: 'same.py', status: 'M' })) }
+  const render = () => h.render(h.api.DockPanel)
+  nodes(render()).filter(n => n.props.row?.type === 'file')[0].props.onPick()
+  assert.match(text(render()), /same.py/)
+  h.results['dev-board'].data = { ...h.results['dev-board'].data, tasks: [{ id: '1234', repos: [repos[1]] }] }
+  const panel = render()
+  assert.equal(nodes(panel).filter(n => n.props.row?.type === 'file').length, 1)
+  assert.ok(!nodes(panel).some(n => n.props.repo?.dir === repos[0].dir))
+  assert.ok(!nodes(panel).some(n => n.props['aria-label'] === '返回仓库文件列表'))
 })
